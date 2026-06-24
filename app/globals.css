@@ -24,3 +24,32 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+.ann-input {
+  width: 100%;
+  background: #0a1520;
+  border: 1px solid #0d2030;
+  border-radius: 8px;
+  padding: 10px 14px;
+  color: #c8dde8;
+  font-size: 14px;
+  outline: none;
+  margin-bottom: 12px;
+}
+.ann-input:focus { border-color: #6c63ff; }
+
+.ann-textarea {
+  width: 100%;
+  background: #0a1520;
+  border: 1px solid #0d2030;
+  border-radius: 8px;
+  padding: 10px 14px;
+  color: #c8dde8;
+  font-size: 14px;
+  outline: none;
+  resize: vertical;
+  min-height: 140px;
+  margin-bottom: 12px;
+  font-family: 'Inter', sans-serif;
+}
+.ann-textarea:focus { border-color: #6c63ff; }
