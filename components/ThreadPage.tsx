@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase";
 import EmojiPicker, { EmojiClickData, Theme } from "emoji-picker-react";
 import Navbar from "./Navbar";
 import Footer from "./Footbar";
+import PremiumLinks from "@/components/PremiumLinks";
 
 interface ThreadPageProps {
   threadId: string;
@@ -441,6 +442,8 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
           {" > "}
           {thread.title}
         </div>
+
+        <PremiumLinks placement="thread" />
 
         {/* ── THREAD CARD ── */}
         <div style={{ background: "#0a1520", border: "1px solid #1a2535", borderRadius: 10, marginBottom: 20, overflow: "hidden" }}>

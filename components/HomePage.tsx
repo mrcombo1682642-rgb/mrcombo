@@ -5,6 +5,7 @@ import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footbar";
 import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
+import PremiumLinks from "@/components/PremiumLinks";
 
 // ── Data ──────────────────────────────────────────────────────
 const ADS = [
@@ -91,18 +92,19 @@ const ONLINE_ROLES = [
   { label: "Member", count: 284, color: "#c8dde8" },
 ];
 
-const STATS = [
-  { value: "4,605,675", label: "Total Posts" },
-  { value: "251,952", label: "Total Threads" },
-  { value: "629,984", label: "Total Members" },
-  { value: "Joeeeee", label: "Last Member" },
-  { value: "338,873", label: "Most Online" },
-];
-
 const AVATAR_COLORS = ["#00b4d8", "#e91e8c", "#f0a500", "#6c63ff", "#27ae60", "#e74c3c"];
 function randomColor() {
   return AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)];
 }
+
+const ROLE_COLORS: Record<string, string> = {
+  admin: "#e74c3c",
+  moderator: "#00b4d8",
+  vip: "#f0a500",
+  "vip+": "#a855f7",
+  lifetime: "#f0a500",
+  member: "#c8dde8",
+};
 
 // ── Modal ──────────────────────────────────────────────────────
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
@@ -111,7 +113,7 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
       <div style={{ background: "#0a1520", border: "1px solid #0d2030", borderRadius: 12, width: "100%", maxWidth: 480, maxHeight: "80vh", overflow: "hidden", display: "flex", flexDirection: "column" }} onClick={e => e.stopPropagation()}>
         <div style={{ background: "#6c63ff", padding: "14px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
           <span style={{ fontWeight: 700, fontSize: 15, color: "#fff" }}>{title}</span>
-          <button onClick={onClose} style={{ background: "rgba(255,255,255,0.15)", border: "none", borderRadius: 6, width: 28, height: 28, color: "#fff", fontSize: 16, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
+          <button onClick={onClose} style={{ background: "rgba(255,255,255,.15)", border: "none", borderRadius: 6, width: 28, height: 28, color: "#fff", fontSize: 16, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
         </div>
         <div style={{ overflowY: "auto", flex: 1 }}>{children}</div>
       </div>
@@ -123,7 +125,7 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
 function Av({ l, size = 34 }: { l: string; size?: number }) {
   return (
     <div style={{ width: size, height: size, flexShrink: 0, background: "#0a1520", border: "1px solid #0d2030", borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", fontSize: size * 0.38, color: "#4a7a94", fontWeight: 700 }}>
-      {l[0]?.toUpperCase()}
+      {l?.[0]?.toUpperCase()}
     </div>
   );
 }
@@ -137,6 +139,11 @@ function timeAgo(dateStr?: string) {
   const hours = Math.floor(mins / 60);
   if (hours < 24) return `${hours}h ago`;
   return `${Math.floor(hours / 24)}d ago`;
+}
+
+function fmtNum(n: number | undefined | null) {
+  if (n === undefined || n === null) return "0";
+  return n.toLocaleString("en-US");
 }
 
 // ── Read Only Tab Content ──────────────────────────────────────
@@ -234,6 +241,21 @@ export default function HomePage() {
   const [dmInput, setDmInput] = useState("");
   const [dmSending, setDmSending] = useState(false);
 
+  // ── NEW: Sidebar / desktop layout live data ──
+  const [announcements, setAnnouncements] = useState<any[]>([]);
+  const [activities, setActivities] = useState<any[]>([]);
+  const [onlineStaff, setOnlineStaff] = useState<any[]>([]);
+  const [homeStats, setHomeStats] = useState<any>(null);
+  const [categoryStats, setCategoryStats] = useState<Record<string, any>>({});
+  const [mobileExtrasOpen, setMobileExtrasOpen] = useState(false);
+
+  // Admin announcement form
+  const [announceFormOpen, setAnnounceFormOpen] = useState(false);
+  const [announceIcon, setAnnounceIcon] = useState("📢");
+  const [announceTitle, setAnnounceTitle] = useState("");
+  const [announceLink, setAnnounceLink] = useState("");
+  const [announceSaving, setAnnounceSaving] = useState(false);
+
   const pinned = PINNED[chatTab];
 
   // Auth check
@@ -268,6 +290,65 @@ export default function HomePage() {
 
     supabase.from("banned_users").select("*").order("created_at", { ascending: false }).then(({ data }) => setBannedUsers(data || []));
   }, []);
+
+  // ── NEW: Load sidebar / stats data ──
+  async function loadSidebarData() {
+    const { data: ann } = await supabase
+      .from("site_announcements")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(6);
+    setAnnouncements(ann || []);
+
+    const { data: act } = await supabase.rpc("get_latest_threads", { limit_count: 8 });
+    setActivities(act || []);
+
+    const { data: staff } = await supabase.rpc("get_online_staff");
+    setOnlineStaff(staff || []);
+
+    const { data: stats } = await supabase.rpc("get_home_stats");
+    if (stats && stats[0]) setHomeStats(stats[0]);
+
+    const { data: catStats } = await supabase.rpc("get_all_category_stats");
+    if (catStats) {
+      const map: Record<string, any> = {};
+      catStats.forEach((c: any) => { map[c.category] = c; });
+      setCategoryStats(map);
+    }
+  }
+
+  useEffect(() => {
+    loadSidebarData();
+  }, []);
+
+  async function handleAddAnnouncement() {
+    if (!announceTitle.trim()) return;
+    setAnnounceSaving(true);
+    const { data: myProfile } = user
+      ? await supabase.from("profiles").select("username").eq("id", user.id).single()
+      : { data: null };
+
+    await supabase.from("site_announcements").insert({
+      icon: announceIcon.trim() || "📢",
+      title: announceTitle.trim(),
+      link: announceLink.trim() || null,
+      posted_by: myProfile?.username || "Admin",
+    });
+
+    setAnnounceTitle("");
+    setAnnounceLink("");
+    setAnnounceIcon("📢");
+    setAnnounceFormOpen(false);
+    setAnnounceSaving(false);
+
+    const { data: ann } = await supabase.from("site_announcements").select("*").order("created_at", { ascending: false }).limit(6);
+    setAnnouncements(ann || []);
+  }
+
+  async function handleDeleteAnnouncement(id: string) {
+    await supabase.from("site_announcements").delete().eq("id", id);
+    setAnnouncements(prev => prev.filter(a => a.id !== id));
+  }
 
   // General chat messages + realtime
   useEffect(() => {
@@ -369,6 +450,10 @@ export default function HomePage() {
     setDmMessages(msgs || []);
   }
 
+  const totalOnlineText = homeStats
+    ? `${fmtNum(homeStats.online_now)} Users online | ${fmtNum(homeStats.online_now)} members and 0 guests`
+    : "Loading online users...";
+
   return (
     <>
       <style>{`
@@ -376,7 +461,24 @@ export default function HomePage() {
         *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
         body{background:#050a0f;color:#b8cfd8;font-family:'Inter',sans-serif}
         .hp{min-height:100vh;background:#050a0f;display:flex;flex-direction:column}
-        .hp-inner{flex:1;max-width:780px;width:100%;margin:0 auto;padding:16px 12px 48px}
+        .hp-content-wrap{margin-top:64px}
+        @media(min-width:1024px){.hp-content-wrap{margin-top:78px}}
+
+        .hp-layout{display:flex;flex-direction:column;max-width:780px;margin:0 auto;width:100%;padding:16px 12px 48px;gap:0;}
+        .hp-main{flex:1;min-width:0;width:100%;}
+        .hp-sidebar{display:none;flex-direction:column;gap:14px;}
+        .hp-sidebar.mobile-open{display:flex;margin-top:14px;}
+        .hp-mobile-toggle{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;
+          background:#080e18;border:1px solid #0d2030;border-radius:8px;padding:11px;color:#00b4d8;
+          font-size:13px;font-weight:700;cursor:pointer;margin-bottom:14px;}
+
+        @media(min-width:1024px){
+          .hp-layout{max-width:1180px;flex-direction:row;align-items:flex-start;gap:22px;padding:24px 24px 60px;}
+          .hp-main{flex:1;}
+          .hp-sidebar{display:flex !important;width:330px;flex-shrink:0;position:sticky;top:96px;margin-top:0 !important;}
+          .hp-mobile-toggle{display:none;}
+        }
+
         .hp-banner{width:100%;height:110px;border-radius:10px;overflow:hidden;margin-bottom:10px;position:relative;background:linear-gradient(135deg,#0a0520,#1a0840,#0a0520);border:1px solid #1a0a30;}
         .hp-banner-glow{position:absolute;inset:0;background:radial-gradient(ellipse 55% 80% at 25% 50%,rgba(168,85,247,.25) 0%,transparent 70%);}
         .hp-banner-content{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;gap:36px;padding:0 24px;}
@@ -409,11 +511,25 @@ export default function HomePage() {
         .hp-cat:not(.on):hover{border-color:#6c63ff;color:#fff}
         .hp-fhdr{background:#6c63ff;border-radius:8px 8px 0 0;padding:10px 16px;display:flex;align-items:center}
         .hp-fbadge{background:rgba(255,255,255,.18);border-radius:5px;padding:3px 10px;font-size:12px;font-weight:700;color:#fff}
-        .hp-flabel{font-size:10px;font-weight:700;letter-spacing:2px;color:#4a7a94;padding:7px 16px;background:#080e18;border-left:1px solid #0d2030;border-right:1px solid #0d2030}
+        .hp-flabel{font-size:10px;font-weight:700;letter-spacing:2px;color:#4a7a94;padding:7px 16px;background:#080e18;border-left:1px solid #0d2030;border-right:1px solid #0d2030;display:flex;align-items:center;justify-content:space-between}
+        .hp-flabel .hp-fcols{display:none}
+        @media(min-width:1024px){
+          .hp-flabel .hp-fcols{display:flex;gap:0;}
+          .hp-flabel .hp-fcols span{width:90px;text-align:center}
+        }
         .hp-fbody{background:#080e18;border:1px solid #0d2030;border-top:none;border-radius:0 0 8px 8px;margin-bottom:14px;overflow:hidden}
-        .hp-fcat{padding:13px 16px;border-bottom:1px solid #0a1520;cursor:pointer;transition:background .2s;text-decoration:none;display:block}
+        .hp-fcat{padding:13px 16px;border-bottom:1px solid #0a1520;cursor:pointer;transition:background .2s;text-decoration:none;display:flex;align-items:center;gap:12px}
         .hp-fcat:hover{background:#0a1520}
         .hp-fcat:last-child{border-bottom:none}
+        .hp-fcat-main{display:flex;gap:12px;align-items:flex-start;flex:1;min-width:0}
+        .hp-fcat-stats{display:none}
+        @media(min-width:1024px){
+          .hp-fcat-stats{display:flex;flex-shrink:0;gap:0;align-items:center;}
+          .hp-fcat-stats .stat-col{width:90px;text-align:center;font-size:12px;color:#8ab0bf}
+          .hp-fcat-stats .stat-col b{color:#fff;display:block;font-size:13px}
+          .hp-fcat-lastpost{width:180px;text-align:left;font-size:11.5px;color:#4a7a94;overflow:hidden}
+          .hp-fcat-lastpost .lp-title{color:#8ab0bf;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;margin-bottom:2px}
+        }
         .hp-ffolder{padding:9px 16px;border-bottom:1px solid #0a1520;display:flex;align-items:center;gap:7px;color:#4a7a94;font-size:12.5px}
         .hp-online{background:#6c63ff;border-radius:10px;padding:14px 16px;margin-bottom:12px}
         .hp-online-row{display:flex;align-items:center;margin-bottom:4px}
@@ -431,6 +547,26 @@ export default function HomePage() {
         .chk.on{background:#6c63ff;border-color:#6c63ff}
         .dm-bubble-mine{background:#6c63ff;border-radius:12px 12px 4px 12px;padding:8px 12px;max-width:75%;}
         .dm-bubble-other{background:#0d2030;border-radius:12px 12px 12px 4px;padding:8px 12px;max-width:75%;}
+
+        /* ── SIDEBAR BOXES ── */
+        .side-box{background:#080e18;border:1px solid #0d2030;border-radius:10px;overflow:hidden}
+        .side-box-hdr{background:#6c63ff;padding:9px 14px;display:flex;align-items:center;justify-content:space-between;font-size:12.5px;font-weight:700;color:#fff}
+        .side-box-hdr-add{background:rgba(255,255,255,.18);border:none;border-radius:5px;padding:3px 9px;color:#fff;font-size:11px;font-weight:700;cursor:pointer}
+        .side-box-body{max-height:320px;overflow-y:auto}
+        .side-empty{padding:18px 14px;text-align:center;color:#3d6a80;font-size:12px}
+        .side-item{display:flex;gap:9px;align-items:flex-start;padding:10px 14px;border-bottom:1px solid #0a1520}
+        .side-item:last-child{border-bottom:none}
+        .side-icon{font-size:15px;flex-shrink:0;width:22px;text-align:center}
+        .side-title{color:#c8dde8;font-size:12.5px;font-weight:600;text-decoration:none;display:block;line-height:1.4}
+        .side-title:hover{color:#00b4d8}
+        .side-meta{font-size:10.5px;color:#3d6a80;margin-top:3px}
+        .side-del{background:none;border:none;color:#e74c3c;cursor:pointer;font-size:12px;flex-shrink:0;opacity:.7}
+        .side-del:hover{opacity:1}
+        .side-form{padding:12px 14px;border-bottom:1px solid #0d2030;display:flex;flex-direction:column;gap:8px;background:#060c14}
+        .side-input{background:#0a1520;border:1px solid #0d2030;border-radius:6px;padding:8px 10px;color:#c8dde8;font-size:12.5px;outline:none;width:100%}
+        .side-staff-item{display:flex;align-items:center;gap:9px;padding:9px 14px;border-bottom:1px solid #0a1520}
+        .side-staff-item:last-child{border-bottom:none}
+        .side-staff-dot{width:8px;height:8px;border-radius:50%;background:#22c55e;flex-shrink:0}
       `}</style>
 
       {/* ── Top Chatters Modal ── */}
@@ -597,193 +733,309 @@ export default function HomePage() {
 
       <div className="hp">
         <Navbar />
-        <div style={{ marginTop: 64 }}>
+        <div className="hp-content-wrap">
 
-          {/* HERO */}
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "40px 16px 28px", textAlign: "center", background: "radial-gradient(ellipse 70% 100% at 50% 0%, rgba(0,180,216,0.08) 0%, transparent 70%)" }}>
-            <img src="/logo.png" alt="MRCombo" style={{ height: 170, width: "auto", objectFit: "contain", mixBlendMode: "lighten", marginBottom: 2, filter: "drop-shadow(0 0 35px rgba(0,180,216,0.4))" }} />
-            <div style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: 14, letterSpacing: 4, color: "#7fd8ec", textTransform: "uppercase", marginTop: -6, textShadow: "0 0 16px rgba(0,180,216,0.45)" }}>
-              Defying Every Limit
-            </div>
-          </div>
+          <div className="hp-layout">
+            {/* ── MAIN COLUMN ── */}
+            <div className="hp-main">
 
-          <div className="hp-inner">
-
-            <div className="hp-banner">
-              <div className="hp-banner-glow" />
-              <div className="hp-banner-content">
-                <div className="hp-banner-item"><span style={{ color: "#a855f7", fontSize: 22 }}>⚡</span>FAST RESPONSE<br />FROM SELLERS</div>
-                <div style={{ width: 1, height: 50, background: "rgba(168,85,247,.3)" }} />
-                <div className="hp-banner-item"><span style={{ color: "#a855f7", fontSize: 22 }}>🔄</span>RELIABLE REPLACE<br />SYSTEM</div>
+              <div className="hp-banner">
+                <div className="hp-banner-glow" />
+                <div className="hp-banner-content">
+                  <div className="hp-banner-item"><span style={{ color: "#a855f7", fontSize: 22 }}>⚡</span>FAST RESPONSE<br />FROM SELLERS</div>
+                  <div style={{ width: 1, height: 50, background: "rgba(168,85,247,.3)" }} />
+                  <div className="hp-banner-item"><span style={{ color: "#a855f7", fontSize: 22 }}>🔄</span>RELIABLE REPLACE<br />SYSTEM</div>
+                </div>
               </div>
-            </div>
+              <PremiumLinks placement="home" />
 
-            <div className="hp-slabel">REFUNDING SERVICES</div>
+              {/* Mobile-only toggle for extra widgets */}
+              <button className="hp-mobile-toggle" onClick={() => setMobileExtrasOpen(v => !v)}>
+                {mobileExtrasOpen ? "▲ Hide" : "▼ Show"} Announcements, Activity & Online Staff
+              </button>
 
-            {ADS.map(ad => (
-              <div key={ad.id} className="hp-ad">
-                {ad.parts.map((p, i) => <span key={i} style={{ color: p.color }}>{p.text}</span>)}
+              <div className="hp-slabel">REFUNDING SERVICES</div>
+
+              {ADS.map(ad => (
+                <div key={ad.id} className="hp-ad">
+                  {ad.parts.map((p, i) => <span key={i} style={{ color: p.color }}>{p.text}</span>)}
+                </div>
+              ))}
+
+              {/* ── CHAT ── */}
+              <div className="hp-chat">
+                <div className="hp-ctoolbar">
+                  <button className="hp-cbtn">Chat</button>
+                  <div style={{ flex: 1 }} />
+                  <button className="hp-cicon" title="Fullscreen" onClick={() => window.open("/chat", "_blank", "noopener,noreferrer")}>⤢</button>
+                  <button className="hp-cicon" title="Top Chatters" onClick={() => setModal("topChatters")}>🏆</button>
+                  {isAdmin && <button className="hp-cicon" title="Banned Users" onClick={() => setModal("banned")}>🚫</button>}
+                  <button className="hp-cicon" title="About Chat" onClick={() => setModal("aboutChat")}>❓</button>
+                  <button className="hp-cicon" title="Settings" onClick={() => setModal("settings")}>⚙️</button>
+                </div>
+
+                <div className="hp-cnotice">
+                  <span style={{ fontSize: 15 }}>✉️</span>
+                  <span><b>Welcome to MRCombo</b>, Please read the <span style={{ color: "#00b4d8", fontWeight: 600, cursor: "pointer" }}>forum rules</span> keep chatbox English at all times. Remember to run downloaded files in a <b>Virtual Machine or Sandboxie</b>. Don&apos;t trust anyone.</span>
+                </div>
+
+                <div className="hp-ctabs">
+                  {CHAT_TABS.map(t => (
+                    <button key={t} className={`hp-ctab ${chatTab === t ? "on" : ""}`} onClick={() => setChatTab(t)}>{t}</button>
+                  ))}
+                </div>
+
+                {pinned && chatTab === "General" && (
+                  <div className="hp-pinned" onClick={() => setPinnedOpen(v => !v)}>
+                    <span style={{ color: "#6c63ff", fontSize: 14 }}>📌</span>
+                    <span style={{ color: "#6c63ff", fontWeight: 600, fontSize: 13 }}>Pinned Messages (1)</span>
+                    <span style={{ marginLeft: "auto", color: "#6c63ff" }}>{pinnedOpen ? "▼" : "▶"}</span>
+                  </div>
+                )}
+                {pinned && pinnedOpen && chatTab === "General" && (
+                  <div style={{ padding: "10px 14px", borderBottom: "1px solid #0d2030", background: "#060c14" }}>
+                    <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                      <span style={{ color: "#4a7a94", fontSize: 12 }}>@</span>
+                      <Av l={pinned.username} size={28} />
+                      <div style={{ flex: 1 }}>
+                        <span style={{ color: pinned.color, fontWeight: 700, fontSize: 12 }}>{pinned.username}</span>{" "}
+                        <span style={{ color: "#00b4d8", fontSize: 12, wordBreak: "break-all" }}>{pinned.link}</span>
+                      </div>
+                      <span style={{ color: "#3d6a80", fontSize: 11, flexShrink: 0 }}>{pinned.time}</span>
+                    </div>
+                  </div>
+                )}
+
+                <div className="hp-cmsgs">
+                  {chatTab === "General" ? (
+                    <>
+                      {messages.length === 0 && (
+                        <div style={{ padding: "20px 14px", textAlign: "center", color: "#3d6a80", fontSize: 12 }}>No messages yet. Be the first to say hi!</div>
+                      )}
+                      {messages.map((m, i) => (
+                        <div key={m.id || i} className="hp-cmsg">
+                          <Av l={m.avatar_letter} size={34} />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                              <span
+                                style={{ fontWeight: 700, fontSize: 12.5, color: m.color, cursor: "pointer" }}
+                                onClick={() => openDm(m.username)}
+                                title={`DM ${m.username}`}
+                              >
+                                {m.username}
+                              </span>
+                              {m.content && <span style={{ fontSize: 12.5, color: "#8ab0bf" }}>{m.content}</span>}
+                            </div>
+                            <div style={{ fontSize: 10.5, color: "#3d6a80", marginTop: 2 }}>{timeAgo(m.created_at)}</div>
+                          </div>
+                        </div>
+                      ))}
+                    </>
+                  ) : (
+                    <ReadOnlyTabContent tab={chatTab} />
+                  )}
+                  <div ref={msgEndRef} />
+                </div>
+
+                {/* Input — sirf General tab mein */}
+                <div className="hp-cinput-row" style={{ display: chatTab === "General" ? "flex" : "none" }}>
+                  <input
+                    className="hp-cinput"
+                    placeholder={user ? "Message #General..." : "🔒 Login to chat"}
+                    value={messageInput}
+                    onChange={e => setMessageInput(e.target.value)}
+                    onKeyDown={e => e.key === "Enter" && handleSend()}
+                    disabled={!user}
+                  />
+                  <button className="hp-csend" onClick={handleSend} disabled={sending || !messageInput.trim() || !user}>
+                    {!user ? "Login" : sending ? "..." : "Send"}
+                  </button>
+                </div>
               </div>
-            ))}
 
-            {/* ── CHAT ── */}
-            <div className="hp-chat">
-              <div className="hp-ctoolbar">
-                <button className="hp-cbtn">Chat</button>
-                <div style={{ flex: 1 }} />
-                <button className="hp-cicon" title="Fullscreen" onClick={() => window.open("/chat", "_blank", "noopener,noreferrer")}>⤢</button>
-                <button className="hp-cicon" title="Top Chatters" onClick={() => setModal("topChatters")}>🏆</button>
-                {isAdmin && <button className="hp-cicon" title="Banned Users" onClick={() => setModal("banned")}>🚫</button>}
-                <button className="hp-cicon" title="About Chat" onClick={() => setModal("aboutChat")}>❓</button>
-                <button className="hp-cicon" title="Settings" onClick={() => setModal("settings")}>⚙️</button>
-              </div>
-
-              <div className="hp-cnotice">
-                <span style={{ fontSize: 15 }}>✉️</span>
-                <span><b>Welcome to MRCombo</b>, Please read the <span style={{ color: "#00b4d8", fontWeight: 600, cursor: "pointer" }}>forum rules</span> keep chatbox English at all times. Remember to run downloaded files in a <b>Virtual Machine or Sandboxie</b>. Don&apos;t trust anyone.</span>
-              </div>
-
-              <div className="hp-ctabs">
-                {CHAT_TABS.map(t => (
-                  <button key={t} className={`hp-ctab ${chatTab === t ? "on" : ""}`} onClick={() => setChatTab(t)}>{t}</button>
+              <div className="hp-cats">
+                {NAV_CATEGORIES.map(c => (
+                  <a key={c.label} href={c.href} className="hp-cat">
+                    <span style={{ fontSize: 17 }}>{c.icon}</span>{c.label}
+                  </a>
                 ))}
               </div>
 
-              {pinned && chatTab === "General" && (
-                <div className="hp-pinned" onClick={() => setPinnedOpen(v => !v)}>
-                  <span style={{ color: "#6c63ff", fontSize: 14 }}>📌</span>
-                  <span style={{ color: "#6c63ff", fontWeight: 600, fontSize: 13 }}>Pinned Messages (1)</span>
-                  <span style={{ marginLeft: "auto", color: "#6c63ff" }}>{pinnedOpen ? "▼" : "▶"}</span>
-                </div>
-              )}
-              {pinned && pinnedOpen && chatTab === "General" && (
-                <div style={{ padding: "10px 14px", borderBottom: "1px solid #0d2030", background: "#060c14" }}>
-                  <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
-                    <span style={{ color: "#4a7a94", fontSize: 12 }}>@</span>
-                    <Av l={pinned.username} size={28} />
-                    <div style={{ flex: 1 }}>
-                      <span style={{ color: pinned.color, fontWeight: 700, fontSize: 12 }}>{pinned.username}</span>{" "}
-                      <span style={{ color: "#00b4d8", fontSize: 12, wordBreak: "break-all" }}>{pinned.link}</span>
-                    </div>
-                    <span style={{ color: "#3d6a80", fontSize: 11, flexShrink: 0 }}>{pinned.time}</span>
+              {FORUM_SECTIONS.map(sec => (
+                <div key={sec.name}>
+                  <div className="hp-fhdr"><span className="hp-fbadge">{sec.name}</span></div>
+                  <div className="hp-flabel">
+                    <span>FORUM</span>
+                    <span className="hp-fcols">
+                      <span>THREADS</span><span>POSTS</span><span>LAST POST</span>
+                    </span>
+                  </div>
+                  <div className="hp-fbody">
+                    {sec.categories.map((cat, i) => {
+                      if ((cat as any).folder) {
+                        return (
+                          <div key={i} className="hp-ffolder"><span>📁</span><span style={{ fontWeight: 600 }}>{cat.title}</span></div>
+                        );
+                      }
+                      const slug = (cat as any).href?.split("/").pop() || "";
+                      const stat = categoryStats[slug];
+                      return (
+                        <a key={i} href={(cat as any).href || "#"} className="hp-fcat">
+                          <div className="hp-fcat-main">
+                            <div style={{ width: 40, height: 40, flexShrink: 0, background: "#0a1520", border: "1px solid #0d2030", borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>{cat.icon}</div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontWeight: 700, fontSize: 13.5, color: "#e4e4e7", marginBottom: 3 }}>{cat.title}</div>
+                              {cat.desc && <div style={{ fontSize: 12, color: "#4a7a94", lineHeight: 1.5 }}>{cat.desc}</div>}
+                              {(cat as any).subfolders?.length > 0 && (
+                                <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 5 }}>
+                                  {(cat as any).subfolders.map((sf: string, si: number) => (
+                                    <span key={sf} style={{ fontSize: 11, color: "#4a7a94", display: "flex", alignItems: "center", gap: 3 }}>
+                                      📁 {sf}{si < (cat as any).subfolders.length - 1 && <span style={{ color: "#1a2a3a" }}>,</span>}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          <div className="hp-fcat-stats">
+                            <div className="stat-col"><b>{fmtNum(stat?.threads_count)}</b>Threads</div>
+                            <div className="stat-col"><b>{fmtNum(stat?.posts_count)}</b>Posts</div>
+                            <div className="hp-fcat-lastpost">
+                              {stat?.last_thread_id ? (
+                                <>
+                                  <span className="lp-title">{stat.last_thread_title}</span>
+                                  <span>{stat.last_username || "—"} · {timeAgo(stat.last_created_at)}</span>
+                                </>
+                              ) : (
+                                <span>No posts yet</span>
+                              )}
+                            </div>
+                          </div>
+                        </a>
+                      );
+                    })}
                   </div>
                 </div>
-              )}
+              ))}
 
-              <div className="hp-cmsgs">
-                {chatTab === "General" ? (
-                  <>
-                    {messages.length === 0 && (
-                      <div style={{ padding: "20px 14px", textAlign: "center", color: "#3d6a80", fontSize: 12 }}>No messages yet. Be the first to say hi!</div>
-                    )}
-                    {messages.map((m, i) => (
-                      <div key={m.id || i} className="hp-cmsg">
-                        <Av l={m.avatar_letter} size={34} />
+              <div className="hp-online">
+                <div className="hp-online-row">
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", flex: 1 }}>{totalOnlineText}</div>
+                  <button className="hp-slbtn" onClick={() => setShowOnline(v => !v)}>👁️ {showOnline ? "Hide List" : "Show List"}</button>
+                </div>
+                {showOnline && (
+                  <div className="hp-roles">
+                    {ONLINE_ROLES.map(r => (
+                      <span key={r.label} style={{ color: r.color, fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>
+                        {r.label}{r.count ? `(${r.count})` : ""}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="hp-stats">
+                <div className="hp-srow"><div className="hp-sval">{fmtNum(homeStats?.total_posts)}</div><div className="hp-slbl">Total Posts</div></div>
+                <div className="hp-srow"><div className="hp-sval">{fmtNum(homeStats?.total_threads)}</div><div className="hp-slbl">Total Threads</div></div>
+                <div className="hp-srow"><div className="hp-sval">{fmtNum(homeStats?.total_members)}</div><div className="hp-slbl">Total Members</div></div>
+                <div className="hp-srow"><div className="hp-sval">{homeStats?.last_member || "—"}</div><div className="hp-slbl">Last Member</div></div>
+                <div className="hp-srow"><div className="hp-sval">{fmtNum(homeStats?.most_online)}</div><div className="hp-slbl">Most Online</div></div>
+              </div>
+
+            </div>
+
+            {/* ── SIDEBAR (desktop always, mobile via toggle) ── */}
+            <div className={`hp-sidebar ${mobileExtrasOpen ? "mobile-open" : ""}`}>
+
+              {/* Announcements — admin editable */}
+              <div className="side-box">
+                <div className="side-box-hdr">
+                  <span>📣 Announcements</span>
+                  {isAdmin && (
+                    <button className="side-box-hdr-add" onClick={() => setAnnounceFormOpen(v => !v)}>
+                      {announceFormOpen ? "✕ Close" : "+ Post"}
+                    </button>
+                  )}
+                </div>
+                {isAdmin && announceFormOpen && (
+                  <div className="side-form">
+                    <input className="side-input" placeholder="Icon (emoji, optional)" value={announceIcon} onChange={e => setAnnounceIcon(e.target.value)} />
+                    <input className="side-input" placeholder="Announcement title" value={announceTitle} onChange={e => setAnnounceTitle(e.target.value)} />
+                    <input className="side-input" placeholder="Link (optional)" value={announceLink} onChange={e => setAnnounceLink(e.target.value)} />
+                    <button
+                      onClick={handleAddAnnouncement}
+                      disabled={announceSaving || !announceTitle.trim()}
+                      style={{ background: "#6c63ff", border: "none", borderRadius: 6, padding: "8px 0", color: "#fff", fontSize: 12.5, fontWeight: 700, cursor: "pointer", opacity: announceSaving || !announceTitle.trim() ? 0.5 : 1 }}
+                    >
+                      {announceSaving ? "Posting..." : "Post Announcement"}
+                    </button>
+                  </div>
+                )}
+                <div className="side-box-body">
+                  {announcements.length === 0 ? (
+                    <div className="side-empty">No announcements yet.</div>
+                  ) : announcements.map(a => (
+                    <div key={a.id} className="side-item">
+                      <span className="side-icon">{a.icon}</span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        {a.link ? (
+                          <a href={a.link} className="side-title">{a.title}</a>
+                        ) : (
+                          <span className="side-title">{a.title}</span>
+                        )}
+                        <div className="side-meta">By {a.posted_by || "Admin"} · {timeAgo(a.created_at)}</div>
+                      </div>
+                      {isAdmin && (
+                        <button className="side-del" onClick={() => handleDeleteAnnouncement(a.id)}>✕</button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Latest Activities — live */}
+              <div className="side-box">
+                <div className="side-box-hdr"><span>🔥 Latest Activities</span></div>
+                <div className="side-box-body">
+                  {activities.length === 0 ? (
+                    <div className="side-empty">No activity yet.</div>
+                  ) : activities.map((t, i) => (
+                    <a key={t.id || i} href={`/thread/${t.id}`} style={{ textDecoration: "none" }}>
+                      <div className="side-item">
+                        <Av l={t.username || "?"} size={26} />
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                            <span
-                              style={{ fontWeight: 700, fontSize: 12.5, color: m.color, cursor: "pointer" }}
-                              onClick={() => openDm(m.username)}
-                              title={`DM ${m.username}`}
-                            >
-                              {m.username}
-                            </span>
-                            {m.content && <span style={{ fontSize: 12.5, color: "#8ab0bf" }}>{m.content}</span>}
-                          </div>
-                          <div style={{ fontSize: 10.5, color: "#3d6a80", marginTop: 2 }}>{timeAgo(m.created_at)}</div>
+                          <span className="side-title" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.title}</span>
+                          <div className="side-meta">From {t.username || "Unknown"} · {timeAgo(t.created_at)}</div>
                         </div>
                       </div>
-                    ))}
-                  </>
-                ) : (
-                  <ReadOnlyTabContent tab={chatTab} />
-                )}
-                <div ref={msgEndRef} />
-              </div>
-
-              {/* Input — sirf General tab mein */}
-              <div className="hp-cinput-row" style={{ display: chatTab === "General" ? "flex" : "none" }}>
-                <input
-                  className="hp-cinput"
-                  placeholder={user ? "Message #General..." : "🔒 Login to chat"}
-                  value={messageInput}
-                  onChange={e => setMessageInput(e.target.value)}
-                  onKeyDown={e => e.key === "Enter" && handleSend()}
-                  disabled={!user}
-                />
-                <button className="hp-csend" onClick={handleSend} disabled={sending || !messageInput.trim() || !user}>
-                  {!user ? "Login" : sending ? "..." : "Send"}
-                </button>
-              </div>
-            </div>
-
-            <div className="hp-cats">
-              {NAV_CATEGORIES.map(c => (
-                <a key={c.label} href={c.href} className="hp-cat">
-                  <span style={{ fontSize: 17 }}>{c.icon}</span>{c.label}
-                </a>
-              ))}
-            </div>
-
-            {FORUM_SECTIONS.map(sec => (
-              <div key={sec.name}>
-                <div className="hp-fhdr"><span className="hp-fbadge">{sec.name}</span></div>
-                <div className="hp-flabel">FORUM</div>
-                <div className="hp-fbody">
-                  {sec.categories.map((cat, i) => (
-                    (cat as any).folder ? (
-                      <div key={i} className="hp-ffolder"><span>📁</span><span style={{ fontWeight: 600 }}>{cat.title}</span></div>
-                    ) : (
-                      <a key={i} href={(cat as any).href || "#"} className="hp-fcat">
-                        <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
-                          <div style={{ width: 40, height: 40, flexShrink: 0, background: "#0a1520", border: "1px solid #0d2030", borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>{cat.icon}</div>
-                          <div style={{ flex: 1 }}>
-                            <div style={{ fontWeight: 700, fontSize: 13.5, color: "#e4e4e7", marginBottom: 3 }}>{cat.title}</div>
-                            {cat.desc && <div style={{ fontSize: 12, color: "#4a7a94", lineHeight: 1.5 }}>{cat.desc}</div>}
-                            {(cat as any).subfolders?.length > 0 && (
-                              <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 5 }}>
-                                {(cat as any).subfolders.map((sf: string, si: number) => (
-                                  <span key={sf} style={{ fontSize: 11, color: "#4a7a94", display: "flex", alignItems: "center", gap: 3 }}>
-                                    📁 {sf}{si < (cat as any).subfolders.length - 1 && <span style={{ color: "#1a2a3a" }}>,</span>}
-                                  </span>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </a>
-                    )
+                    </a>
                   ))}
                 </div>
               </div>
-            ))}
 
-            <div className="hp-online">
-              <div className="hp-online-row">
-                <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", flex: 1 }}>115,330 Users online | 461 members and 114,858 guests</div>
-                <button className="hp-slbtn" onClick={() => setShowOnline(v => !v)}>👁️ {showOnline ? "Hide List" : "Show List"}</button>
-              </div>
-              {showOnline && (
-                <div className="hp-roles">
-                  {ONLINE_ROLES.map(r => (
-                    <span key={r.label} style={{ color: r.color, fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>
-                      {r.label}{r.count ? `(${r.count})` : ""}
-                    </span>
+              {/* Online Staff — live */}
+              <div className="side-box">
+                <div className="side-box-hdr"><span>🛡️ Online Staff</span></div>
+                <div className="side-box-body">
+                  {onlineStaff.length === 0 ? (
+                    <div className="side-empty">No staff online right now.</div>
+                  ) : onlineStaff.map((s, i) => (
+                    <a key={i} href={`/profile/${s.username}`} style={{ textDecoration: "none" }}>
+                      <div className="side-staff-item">
+                        <span className="side-staff-dot" />
+                        <Av l={s.username} size={26} />
+                        <span style={{ fontSize: 12.5, fontWeight: 600, color: ROLE_COLORS[s.role] || "#c8dde8" }}>
+                          {s.username} <span style={{ color: "#4a7a94", fontWeight: 400 }}>({s.role})</span>
+                        </span>
+                      </div>
+                    </a>
                   ))}
                 </div>
-              )}
-            </div>
+              </div>
 
-            <div className="hp-stats">
-              {STATS.map(st => (
-                <div key={st.label} className="hp-srow">
-                  <div className="hp-sval">{st.value}</div>
-                  <div className="hp-slbl">{st.label}</div>
-                </div>
-              ))}
             </div>
-
           </div>
+
         </div>
         <Footer />
       </div>

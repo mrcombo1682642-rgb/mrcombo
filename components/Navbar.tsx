@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 
@@ -55,14 +55,17 @@ const NAV_LINKS = [
 
 export default function Navbar() {
   const handleLogout = async () => {
-  await supabase.auth.signOut();
-  window.location.href = "/";
-};
+    await supabase.auth.signOut();
+    window.location.href = "/";
+  };
+
   const [user, setUser] = useState<any>(null);
   const [username, setUsername] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const [extrasOpen, setExtrasOpen] = useState(false);
+  const [desktopExtrasOpen, setDesktopExtrasOpen] = useState(false);
+  const desktopExtrasRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const handleScroll = () => setScrolled(window.scrollY > 10);
@@ -79,55 +82,68 @@ export default function Navbar() {
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [sidebarOpen]);
+
   useEffect(() => {
-  const loadUser = async () => {
+    if (!desktopExtrasOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (desktopExtrasRef.current && !desktopExtrasRef.current.contains(e.target as Node)) {
+        setDesktopExtrasOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [desktopExtrasOpen]);
+
+  useEffect(() => {
+    const loadUser = async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      setUser(user);
+
+      if (user) {
+        const { data } = await supabase
+          .from("profiles")
+          .select("username")
+          .eq("id", user.id)
+          .single();
+
+        if (data) {
+          setUsername(data.username);
+        }
+      }
+    };
+
+    loadUser();
+
     const {
-      data: { user },
-    } = await supabase.auth.getUser();
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      setUser(session?.user ?? null);
 
-    setUser(user);
+      if (session?.user) {
+        const { data } = await supabase
+          .from("profiles")
+          .select("username")
+          .eq("id", session.user.id)
+          .single();
 
-    if (user) {
-      const { data } = await supabase
-        .from("profiles")
-        .select("username")
-        .eq("id", user.id)
-        .single();
-
-      if (data) {
-        setUsername(data.username);
+        if (data) {
+          setUsername(data.username);
+        }
+      } else {
+        setUsername("");
       }
-    }
-  };
+    });
 
-  loadUser();
+    return () => subscription.unsubscribe();
+  }, []);
 
-  const {
-    data: { subscription },
-  } = supabase.auth.onAuthStateChange(async (_event, session) => {
-    setUser(session?.user ?? null);
-
-    if (session?.user) {
-      const { data } = await supabase
-        .from("profiles")
-        .select("username")
-        .eq("id", session.user.id)
-        .single();
-
-      if (data) {
-        setUsername(data.username);
-      }
-    } else {
-      setUsername("");
-    }
-  });
-
-  return () => subscription.unsubscribe();
-}, []);
   return (
     <>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@700&family=Inter:wght@400;500;600;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@700&family=Rajdhani:wght@700&family=Inter:wght@400;500;600;700&display=swap');
         *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
         :root{
           --bg:#050a0f;--bg2:#060c12;--surface:#0a1520;
@@ -138,11 +154,11 @@ export default function Navbar() {
 
         /* NAVBAR */
         .nav{position:fixed;top:0;left:0;right:0;z-index:100;height:64px;
-          display:flex;align-items:center;padding:0 16px;gap:12px;
-          background:${scrolled?"rgba(5,10,15,0.97)":"var(--bg)"};
+          display:flex;align-items:center;padding:0 16px;gap:10px;
+          background:${scrolled ? "rgba(5,10,15,0.97)" : "var(--bg)"};
           border-bottom:1px solid var(--border);
-          backdrop-filter:${scrolled?"blur(12px)":"none"};
-          transition:background .3s;}
+          backdrop-filter:${scrolled ? "blur(12px)" : "none"};
+          transition:background .3s, height .3s;}
         .hamburger{display:flex;flex-direction:column;justify-content:center;gap:5px;
           width:40px;height:40px;cursor:pointer;background:none;border:none;
           padding:8px;border-radius:8px;transition:background .2s;flex-shrink:0;}
@@ -151,9 +167,9 @@ export default function Navbar() {
         .hamburger.open span:nth-child(1){transform:translateY(7px) rotate(45deg)}
         .hamburger.open span:nth-child(2){opacity:0;transform:scaleX(0)}
         .hamburger.open span:nth-child(3){transform:translateY(-7px) rotate(-45deg)}
-        .nav-logo{flex:1;display:flex;align-items:center;text-decoration:none}
-        .nav-logo img{height:46px;width:auto;object-fit:contain;mix-blend-mode:lighten}
-        .nav-actions{display:flex;gap:8px;align-items:center}
+        .nav-logo{display:flex;align-items:center;text-decoration:none;flex-shrink:0}
+        .nav-logo img{height:40px;width:auto;object-fit:contain;mix-blend-mode:lighten;transition:height .3s}
+        .nav-actions{display:flex;gap:10px;align-items:center;margin-left:auto;flex-shrink:0;padding-left:14px}
         .btn-login{display:flex;align-items:center;gap:6px;padding:8px 16px;
           background:var(--surface);border:1px solid var(--border);border-radius:8px;
           color:var(--text);font-size:13px;font-weight:500;cursor:pointer;
@@ -165,12 +181,64 @@ export default function Navbar() {
           cursor:pointer;transition:opacity .2s;white-space:nowrap;text-decoration:none;}
         .btn-create:hover{opacity:.88}
 
+        /* DESKTOP HORIZONTAL NAV */
+        .desktop-nav{display:none;align-items:center;gap:2px;flex:1;min-width:0;
+          overflow-x:auto;scrollbar-width:none;-ms-overflow-style:none;}
+        .desktop-nav::-webkit-scrollbar{display:none}
+        .desktop-link{display:flex;align-items:center;gap:7px;padding:9px 12px;border-radius:8px;
+          color:var(--muted);font-size:13px;font-weight:600;text-decoration:none;white-space:nowrap;
+          position:relative;transition:all .2s;background:none;border:none;cursor:pointer;flex-shrink:0;}
+        .desktop-link:hover{background:var(--surface);color:#fff}
+        .desktop-link svg{opacity:.75;flex-shrink:0}
+        .desktop-link:hover svg{opacity:1}
+        .desktop-link .link-text{display:none}
+        .desktop-link .arrow{width:12px;height:12px;opacity:.6;transition:transform .2s;flex-shrink:0}
+        .desktop-link .arrow.open{transform:rotate(180deg)}
+        .desktop-dropdown{position:absolute;top:calc(100% + 8px);left:0;background:var(--bg2);
+          border:1px solid var(--border);border-radius:8px;min-width:170px;padding:6px;
+          display:flex;flex-direction:column;gap:2px;box-shadow:0 12px 28px rgba(0,0,0,.5);z-index:600;}
+        .desktop-dropdown a{padding:8px 12px;border-radius:6px;color:var(--muted);font-size:13px;
+          text-decoration:none;transition:all .2s;}
+        .desktop-dropdown a:hover{background:var(--surface);color:#fff}
+
+        @media(min-width:1024px){
+          .nav{height:72px;padding:0 20px;gap:6px;}
+          .hamburger{display:none}
+          .nav-logo img{height:46px}
+          .desktop-nav{display:flex}
+        }
+        @media(min-width:1280px){
+          .nav{padding:0 32px;gap:10px;}
+          .nav-logo img{height:52px}
+          .desktop-link{padding:9px 14px;gap:8px}
+          .desktop-link .link-text{display:inline}
+        }
+
+        /* HERO — attached directly below fixed navbar, appears on every page */
+        .navbar-hero{width:100%;margin-top:64px;position:relative;display:flex;flex-direction:column;
+          align-items:center;justify-content:center;padding:26px 16px 18px;text-align:center;overflow:hidden;
+          background:radial-gradient(ellipse 70% 100% at 50% 0%, rgba(0,180,216,0.08) 0%, transparent 70%);
+          border-bottom:1px solid #0a1520;}
+        .navbar-hero img{height:100px;width:auto;object-fit:contain;mix-blend-mode:lighten;
+          filter:drop-shadow(0 0 28px rgba(0,180,216,.4));}
+        .navbar-hero-tag{font-family:'Rajdhani',sans-serif;font-weight:700;font-size:11px;letter-spacing:3px;
+          color:#7fd8ec;text-transform:uppercase;margin-top:-2px;text-shadow:0 0 14px rgba(0,180,216,.4);}
+        @media(min-width:1024px){
+          .navbar-hero{margin-top:72px;padding:52px 24px 36px;
+            background:
+              radial-gradient(ellipse 55% 100% at 25% 15%, rgba(108,99,255,.16) 0%, transparent 65%),
+              radial-gradient(ellipse 50% 90% at 75% 55%, rgba(0,180,216,.14) 0%, transparent 70%),
+              linear-gradient(180deg,#0a0718 0%,#050a0f 100%);}
+          .navbar-hero img{height:180px}
+          .navbar-hero-tag{font-size:16px;letter-spacing:5px}
+        }
+
         /* OVERLAY */
         .overlay{position:fixed;inset:0;z-index:150;background:rgba(0,0,0,.65);
           backdrop-filter:blur(3px);opacity:0;pointer-events:none;transition:opacity .3s}
         .overlay.open{opacity:1;pointer-events:all}
 
-        /* SIDEBAR */
+        /* SIDEBAR (mobile) */
         .sidebar{position:fixed;top:0;left:0;z-index:200;width:270px;height:100vh;
           background:var(--bg2);border-right:1px solid var(--border);
           display:flex;flex-direction:column;padding:0;
@@ -211,9 +279,9 @@ export default function Navbar() {
         }
       `}</style>
 
-      {/* TOP NAVBAR */}
+      {/* TOP NAVBAR (fixed) */}
       <nav className="nav">
-        <button id="hamburger" className={`hamburger ${sidebarOpen?"open":""}`}
+        <button id="hamburger" className={`hamburger ${sidebarOpen ? "open" : ""}`}
           onClick={() => setSidebarOpen(v => !v)} aria-label="Menu">
           <span/><span/><span/>
         </button>
@@ -222,65 +290,101 @@ export default function Navbar() {
           <img src="/logo.png" alt="MRCombo"/>
         </Link>
 
+        {/* DESKTOP HORIZONTAL LINKS */}
+        <div className="desktop-nav" ref={desktopExtrasRef}>
+          {NAV_LINKS.map(link => (
+            link.hasDropdown ? (
+              <div key={link.label} style={{ position: "relative" }}>
+                <button className="desktop-link" onClick={() => setDesktopExtrasOpen(v => !v)}>
+                  {link.icon}
+                  <span className="link-text">{link.label}</span>
+                  <svg className={`arrow ${desktopExtrasOpen ? "open" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <polyline points="6 9 12 15 18 9"/>
+                  </svg>
+                </button>
+                {desktopExtrasOpen && (
+                  <div className="desktop-dropdown">
+                    {link.dropdown?.map(item => (
+                      <Link key={item.label} href={item.href} onClick={() => setDesktopExtrasOpen(false)}>
+                        {item.label}
+                      </Link>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <Link key={link.label} href={link.href} className="desktop-link" title={link.label}>
+                {link.icon}
+                <span className="link-text">{link.label}</span>
+              </Link>
+            )
+          ))}
+        </div>
+
         <div className="nav-actions">
-  {!user ? (
-    <>
-      <Link href="/login" className="btn-login">
-        Login
-      </Link>
+          {!user ? (
+            <>
+              <Link href="/login" className="btn-login">
+                Login
+              </Link>
 
-      <Link href="/createaccount" className="btn-create">
-        Create Account
-      </Link>
-    </>
-  ) : (
-    <>
+              <Link href="/createaccount" className="btn-create">
+                Create Account
+              </Link>
+            </>
+          ) : (
+            <>
+              <Link
+                href="/profile"
+                style={{
+                  width: 40,
+                  height: 40,
+                  borderRadius: "50%",
+                  background: "#0a1520",
+                  border: "1px solid #0d2030",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: "#fff",
+                  textDecoration: "none",
+                }}
+              >
+                <svg
+                  width="20"
+                  height="20"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                >
+                  <path d="M20 21a8 8 0 0 0-16 0" />
+                  <circle cx="12" cy="7" r="4" />
+                </svg>
+              </Link>
 
-      <Link
-  href="/profile"
-  style={{
-    width: 40,
-    height: 40,
-    borderRadius: "50%",
-    background: "#0a1520",
-    border: "1px solid #0d2030",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    color: "#fff",
-    textDecoration: "none",
-  }}
->
-  <svg
-    width="20"
-    height="20"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-  >
-    <path d="M20 21a8 8 0 0 0-16 0" />
-    <circle cx="12" cy="7" r="4" />
-  </svg>
-</Link>
-
-      <button
-        onClick={handleLogout}
-        className="btn-login"
-        style={{ cursor: "pointer" }}
-      >
-        Logout
-      </button>
-    </>
-  )}
-</div>
+              <button
+                onClick={handleLogout}
+                className="btn-login"
+                style={{ cursor: "pointer" }}
+              >
+                Logout
+              </button>
+            </>
+          )}
+        </div>
       </nav>
 
-      {/* OVERLAY */}
-      <div className={`overlay ${sidebarOpen?"open":""}`} onClick={() => setSidebarOpen(false)}/>
+      {/* HERO LOGO — attached directly below navbar, shows on every page, mobile + desktop */}
+      <div className="navbar-hero">
+        <img src="/logo.png" alt="MRCombo" />
+        <div className="navbar-hero-tag">Defying Every Limit</div>
+      </div>
 
-      {/* SIDEBAR */}
-      <aside id="sidebar" className={`sidebar ${sidebarOpen?"open":""}`}>
+      {/* OVERLAY */}
+      <div className={`overlay ${sidebarOpen ? "open" : ""}`} onClick={() => setSidebarOpen(false)}/>
+
+      {/* SIDEBAR (mobile only) */}
+      <aside id="sidebar" className={`sidebar ${sidebarOpen ? "open" : ""}`}>
         <div className="sidebar-header">
           <span className="sidebar-logo">
             <img src="/logo.png" alt="MRCombo"/>
@@ -303,7 +407,7 @@ export default function Navbar() {
                   >
                     {link.icon}
                     <span className="nav-link-label">{link.label}</span>
-                    <svg className={`dropdown-arrow ${extrasOpen?"open":""}`}
+                    <svg className={`dropdown-arrow ${extrasOpen ? "open" : ""}`}
                       viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <polyline points="6 9 12 15 18 9"/>
                     </svg>
