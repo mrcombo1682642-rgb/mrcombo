@@ -6,7 +6,7 @@ import { supabase } from "@/lib/supabase";
 import EmojiPicker, { EmojiClickData, Theme } from "emoji-picker-react";
 import Navbar from "./Navbar";
 import Footer from "./Footbar";
-import PremiumLinks from "@/components/PremiumLinks";
+import PremiumOfferBanner from "@/components/PremiumOfferBanner";
 
 interface ThreadPageProps {
   threadId: string;
@@ -425,6 +425,7 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
   return (
     <div style={{ minHeight: "100vh", background: "#050a0f", color: "#e7e7e7" }}>
       <Navbar />
+      
 
       <div style={{ maxWidth: 900, margin: "0 auto", padding: "80px 16px" }}>
 
@@ -442,8 +443,7 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
           {" > "}
           {thread.title}
         </div>
-
-        <PremiumLinks placement="thread" />
+        <PremiumOfferBanner context="thread" />
 
         {/* ── THREAD CARD ── */}
         <div style={{ background: "#0a1520", border: "1px solid #1a2535", borderRadius: 10, marginBottom: 20, overflow: "hidden" }}>

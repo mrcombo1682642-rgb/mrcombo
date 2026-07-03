@@ -5,7 +5,7 @@ import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footbar";
 import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
-import PremiumLinks from "@/components/PremiumLinks";
+import PremiumOfferBanner from "@/components/PremiumOfferBanner";
 
 // ── Data ──────────────────────────────────────────────────────
 const ADS = [
@@ -733,6 +733,7 @@ export default function HomePage() {
 
       <div className="hp">
         <Navbar />
+        <PremiumOfferBanner context="home" />
         <div className="hp-content-wrap">
 
           <div className="hp-layout">
@@ -747,8 +748,7 @@ export default function HomePage() {
                   <div className="hp-banner-item"><span style={{ color: "#a855f7", fontSize: 22 }}>🔄</span>RELIABLE REPLACE<br />SYSTEM</div>
                 </div>
               </div>
-              <PremiumLinks placement="home" />
-
+            
               {/* Mobile-only toggle for extra widgets */}
               <button className="hp-mobile-toggle" onClick={() => setMobileExtrasOpen(v => !v)}>
                 {mobileExtrasOpen ? "▲ Hide" : "▼ Show"} Announcements, Activity & Online Staff

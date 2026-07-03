@@ -61,11 +61,15 @@ export default function Navbar() {
 
   const [user, setUser] = useState<any>(null);
   const [username, setUsername] = useState("");
+  const [avatarUrl, setAvatarUrl] = useState("");
+  const [role, setRole] = useState("member");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const [extrasOpen, setExtrasOpen] = useState(false);
   const [desktopExtrasOpen, setDesktopExtrasOpen] = useState(false);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const desktopExtrasRef = useRef<HTMLDivElement>(null);
+  const profileMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const handleScroll = () => setScrolled(window.scrollY > 10);
@@ -95,6 +99,17 @@ export default function Navbar() {
   }, [desktopExtrasOpen]);
 
   useEffect(() => {
+    if (!profileMenuOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (profileMenuRef.current && !profileMenuRef.current.contains(e.target as Node)) {
+        setProfileMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [profileMenuOpen]);
+
+  useEffect(() => {
     const loadUser = async () => {
       const {
         data: { user },
@@ -105,12 +120,14 @@ export default function Navbar() {
       if (user) {
         const { data } = await supabase
           .from("profiles")
-          .select("username")
+          .select("username, avatar_url, role")
           .eq("id", user.id)
           .single();
 
         if (data) {
           setUsername(data.username);
+          setAvatarUrl(data.avatar_url || "");
+          setRole(data.role || "member");
         }
       }
     };
@@ -125,15 +142,19 @@ export default function Navbar() {
       if (session?.user) {
         const { data } = await supabase
           .from("profiles")
-          .select("username")
+          .select("username, avatar_url, role")
           .eq("id", session.user.id)
           .single();
 
         if (data) {
           setUsername(data.username);
+          setAvatarUrl(data.avatar_url || "");
+          setRole(data.role || "member");
         }
       } else {
         setUsername("");
+        setAvatarUrl("");
+        setRole("member");
       }
     });
 
@@ -170,6 +191,39 @@ export default function Navbar() {
         .nav-logo{display:flex;align-items:center;text-decoration:none;flex-shrink:0}
         .nav-logo img{height:40px;width:auto;object-fit:contain;mix-blend-mode:lighten;transition:height .3s}
         .nav-actions{display:flex;gap:10px;align-items:center;margin-left:auto;flex-shrink:0;padding-left:14px}
+
+        /* PROFILE DROPDOWN */
+        .profile-menu-wrap{position:relative}
+        .profile-trigger{width:40px;height:40px;border-radius:50%;background:var(--surface);
+          border:1px solid var(--border);display:flex;align-items:center;justify-content:center;
+          color:#fff;cursor:pointer;overflow:hidden;padding:0;transition:border-color .2s}
+        .profile-trigger:hover{border-color:var(--accent)}
+        .profile-trigger img{width:100%;height:100%;object-fit:cover}
+        .profile-dropdown{position:absolute;top:calc(100% + 10px);right:0;width:290px;
+          background:var(--bg2);border:1px solid var(--border);border-radius:12px;
+          box-shadow:0 16px 40px rgba(0,0,0,.55);overflow:hidden;z-index:700;}
+        .profile-dropdown-header{display:flex;gap:12px;align-items:flex-start;padding:16px;
+          border-bottom:1px solid var(--border)}
+        .profile-dropdown-avatar{width:46px;height:46px;border-radius:10px;flex-shrink:0;
+          background:var(--surface);border:1px solid var(--border);overflow:hidden;
+          display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;color:var(--accent)}
+        .profile-dropdown-avatar img{width:100%;height:100%;object-fit:cover}
+        .profile-dropdown-minilink{font-size:11.5px;color:var(--accent);text-decoration:none}
+        .profile-dropdown-minilink:hover{text-decoration:underline}
+        .profile-dropdown-section{padding:10px 16px;border-bottom:1px solid var(--border)}
+        .profile-dropdown-label{font-size:10px;font-weight:700;letter-spacing:1.5px;
+          color:var(--muted);text-transform:uppercase;margin-bottom:8px}
+        .profile-dropdown-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px}
+        .profile-dropdown-item{display:flex;align-items:center;gap:7px;padding:8px 9px;
+          border-radius:7px;color:var(--text);font-size:12.5px;font-weight:500;
+          text-decoration:none;transition:background .15s;}
+        .profile-dropdown-item:hover{background:var(--surface)}
+        .profile-dropdown-item svg{opacity:.7;flex-shrink:0}
+        .profile-dropdown-item.full{grid-column:1 / -1}
+        .profile-dropdown-logout{display:flex;align-items:center;justify-content:center;gap:8px;
+          width:100%;background:linear-gradient(135deg,var(--accent2),var(--accent));border:none;
+          padding:13px 0;color:#fff;font-size:13px;font-weight:700;cursor:pointer;transition:opacity .2s}
+        .profile-dropdown-logout:hover{opacity:.9}
         .btn-login{display:flex;align-items:center;gap:6px;padding:8px 16px;
           background:var(--surface);border:1px solid var(--border);border-radius:8px;
           color:var(--text);font-size:13px;font-weight:500;cursor:pointer;
@@ -333,43 +387,86 @@ export default function Navbar() {
               </Link>
             </>
           ) : (
-            <>
-              <Link
-                href="/profile"
-                style={{
-                  width: 40,
-                  height: 40,
-                  borderRadius: "50%",
-                  background: "#0a1520",
-                  border: "1px solid #0d2030",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  color: "#fff",
-                  textDecoration: "none",
-                }}
-              >
-                <svg
-                  width="20"
-                  height="20"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                >
-                  <path d="M20 21a8 8 0 0 0-16 0" />
-                  <circle cx="12" cy="7" r="4" />
-                </svg>
-              </Link>
-
+            <div className="profile-menu-wrap" ref={profileMenuRef}>
               <button
-                onClick={handleLogout}
-                className="btn-login"
-                style={{ cursor: "pointer" }}
+                onClick={() => setProfileMenuOpen(v => !v)}
+                className="profile-trigger"
+                aria-label="Account menu"
               >
-                Logout
+                {avatarUrl ? (
+                  <img src={avatarUrl} alt={username} />
+                ) : (
+                  <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M20 21a8 8 0 0 0-16 0" />
+                    <circle cx="12" cy="7" r="4" />
+                  </svg>
+                )}
               </button>
-            </>
+
+              {profileMenuOpen && (
+                <div className="profile-dropdown">
+                  {/* Mini profile card */}
+                  <div className="profile-dropdown-header">
+                    <div className="profile-dropdown-avatar">
+                      {avatarUrl ? (
+                        <img src={avatarUrl} alt={username} />
+                      ) : (
+                        (username || "?").slice(0, 2).toUpperCase()
+                      )}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 700, fontSize: 14, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {username}
+                      </div>
+                      <div style={{ fontSize: 11.5, color: "#7fa8bb", textTransform: "capitalize" }}>{role}</div>
+                      <div style={{ display: "flex", gap: 10, marginTop: 4 }}>
+                        <Link href={`/profile/${username}`} className="profile-dropdown-minilink" onClick={() => setProfileMenuOpen(false)}>
+                          View Profile
+                        </Link>
+                        <Link href="/settings" className="profile-dropdown-minilink" onClick={() => setProfileMenuOpen(false)}>
+                          Control Panel
+                        </Link>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="profile-dropdown-section">
+                    <div className="profile-dropdown-label">User Settings</div>
+                    <div className="profile-dropdown-grid">
+                      <Link href="/profile" className="profile-dropdown-item" onClick={() => setProfileMenuOpen(false)}>
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21a8 8 0 0 0-16 0"/><circle cx="12" cy="7" r="4"/></svg>
+                        Edit Profile
+                      </Link>
+                      <Link href="/profile" className="profile-dropdown-item" onClick={() => setProfileMenuOpen(false)}>
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 17l6-6 4 4 8-8"/></svg>
+                        Change Signature
+                      </Link>
+                      <Link href="/settings" className="profile-dropdown-item" onClick={() => setProfileMenuOpen(false)}>
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                        Change Password
+                      </Link>
+                      <Link href="/settings" className="profile-dropdown-item" onClick={() => setProfileMenuOpen(false)}>
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 6L2 7"/></svg>
+                        Change E-Mail
+                      </Link>
+                    </div>
+                  </div>
+
+                  <div className="profile-dropdown-section">
+                    <div className="profile-dropdown-label">Preferences</div>
+                    <Link href="/settings" className="profile-dropdown-item full" onClick={() => setProfileMenuOpen(false)}>
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                      Options
+                    </Link>
+                  </div>
+
+                  <button onClick={handleLogout} className="profile-dropdown-logout">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                    Logout
+                  </button>
+                </div>
+              )}
+            </div>
           )}
         </div>
       </nav>
