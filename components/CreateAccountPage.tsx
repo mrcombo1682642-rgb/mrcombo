@@ -148,7 +148,7 @@ export default function CreateAccountPage() {
           </div>
         </div>
         <Footer />
-        <style jsx>{`${sharedStyles}`}</style>
+        <style>{sharedStyles}</style>
       </div>
     );
   }
@@ -240,7 +240,7 @@ export default function CreateAccountPage() {
         </div>
       </div>
       <Footer />
-      <style jsx>{`${sharedStyles}`}</style>
+      <style>{sharedStyles}</style>
     </div>
   );
 }
@@ -290,7 +290,7 @@ const sharedStyles = `
     -webkit-background-clip: text; -webkit-text-fill-color: transparent;
     margin-bottom: 18px;
   }
-  h1 { color: #e0f0ff; font-size: 21px; margin: 0 0 6px; text-align: center; font-weight: 700; }
+  .auth-page h1 { color: #e0f0ff; font-size: 21px; margin: 0 0 6px; text-align: center; font-weight: 700; }
   .auth-sub { color: #6a8a9a; font-size: 13px; text-align: center; margin: 0 0 22px; line-height: 1.5; }
   .auth-field {
     position: relative; display: flex; align-items: center;
