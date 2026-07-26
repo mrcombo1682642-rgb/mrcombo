@@ -256,35 +256,52 @@ export default function Navbar() {
         .desktop-dropdown a:hover{background:var(--surface);color:#fff}
 
         @media(min-width:1024px){
-          .nav{height:72px;padding:0 20px;gap:6px;}
+          .nav{height:76px;padding:0 20px;gap:6px;}
           .hamburger{display:none}
-          .nav-logo img{height:46px}
+          .nav-logo img{height:54px}
           .desktop-nav{display:flex}
         }
         @media(min-width:1280px){
           .nav{padding:0 32px;gap:10px;}
-          .nav-logo img{height:52px}
+          .nav-logo img{height:62px}
           .desktop-link{padding:9px 14px;gap:8px}
           .desktop-link .link-text{display:inline}
         }
+        @media(min-width:1600px){
+          .nav{height:84px}
+          .nav-logo img{height:70px}
+        }
 
-        /* HERO — attached directly below fixed navbar, appears on every page */
+        /* HERO — attached directly below fixed navbar, appears on every page.
+           Wrapped in a Link so clicking the banner goes to Home. */
+        .navbar-hero-link{display:block;text-decoration:none;cursor:pointer}
         .navbar-hero{width:100%;margin-top:64px;position:relative;display:flex;flex-direction:column;
           align-items:center;justify-content:center;padding:26px 16px 18px;text-align:center;overflow:hidden;
           background:radial-gradient(ellipse 70% 100% at 50% 0%, rgba(0,180,216,0.08) 0%, transparent 70%);
-          border-bottom:1px solid #0a1520;}
-        .navbar-hero img{height:100px;width:auto;object-fit:contain;mix-blend-mode:lighten;
+          border-bottom:1px solid #0a1520;transition:background .2s;}
+        .navbar-hero-link:hover .navbar-hero{background:radial-gradient(ellipse 70% 100% at 50% 0%, rgba(0,180,216,0.13) 0%, transparent 70%);}
+        .navbar-hero img{height:110px;width:auto;max-width:88vw;object-fit:contain;mix-blend-mode:lighten;
           filter:drop-shadow(0 0 28px rgba(0,180,216,.4));}
         .navbar-hero-tag{font-family:'Rajdhani',sans-serif;font-weight:700;font-size:11px;letter-spacing:3px;
           color:#7fd8ec;text-transform:uppercase;margin-top:-2px;text-shadow:0 0 14px rgba(0,180,216,.4);}
         @media(min-width:1024px){
-          .navbar-hero{margin-top:72px;padding:52px 24px 36px;
+          .navbar-hero{margin-top:76px;padding:60px 24px 42px;
             background:
               radial-gradient(ellipse 55% 100% at 25% 15%, rgba(108,99,255,.16) 0%, transparent 65%),
               radial-gradient(ellipse 50% 90% at 75% 55%, rgba(0,180,216,.14) 0%, transparent 70%),
               linear-gradient(180deg,#0a0718 0%,#050a0f 100%);}
-          .navbar-hero img{height:180px}
-          .navbar-hero-tag{font-size:16px;letter-spacing:5px}
+          .navbar-hero-link:hover .navbar-hero{
+            background:
+              radial-gradient(ellipse 55% 100% at 25% 15%, rgba(108,99,255,.22) 0%, transparent 65%),
+              radial-gradient(ellipse 50% 90% at 75% 55%, rgba(0,180,216,.19) 0%, transparent 70%),
+              linear-gradient(180deg,#0a0718 0%,#050a0f 100%);}
+          .navbar-hero img{height:230px;max-width:70vw}
+          .navbar-hero-tag{font-size:17px;letter-spacing:5px}
+        }
+        @media(min-width:1600px){
+          .navbar-hero{margin-top:84px;padding:72px 24px 50px}
+          .navbar-hero img{height:280px}
+          .navbar-hero-tag{font-size:19px}
         }
 
         /* OVERLAY */
@@ -471,11 +488,14 @@ export default function Navbar() {
         </div>
       </nav>
 
-      {/* HERO LOGO — attached directly below navbar, shows on every page, mobile + desktop */}
-      <div className="navbar-hero">
-        <img src="/logo.png" alt="MRCombo" />
-        <div className="navbar-hero-tag">Defying Every Limit</div>
-      </div>
+      {/* HERO LOGO / BANNER — attached directly below navbar, shows on every page,
+          mobile + desktop. Now wrapped in a Link so clicking it goes to Home. */}
+      <Link href="/" className="navbar-hero-link">
+        <div className="navbar-hero">
+          <img src="/logo.png" alt="MRCombo" />
+          <div className="navbar-hero-tag">Defying Every Limit</div>
+        </div>
+      </Link>
 
       {/* OVERLAY */}
       <div className={`overlay ${sidebarOpen ? "open" : ""}`} onClick={() => setSidebarOpen(false)}/>

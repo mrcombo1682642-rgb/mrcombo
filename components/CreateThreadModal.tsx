@@ -109,6 +109,22 @@ export default function CreateThreadModal({
     if (url) exec("createLink", url);
   }
 
+  function insertHiddenLink() {
+    const url = prompt("Hidden link ka URL daalo (Premium users turant dekhenge, Free users comment karne ke baad):");
+    if (!url || !url.trim()) return;
+
+    const label = prompt("Link ka text/label (khaali chhodo to seedha URL dikhega):", "") || url.trim();
+
+    const wrappedHTML =
+      `<div class="hlb-pending" contenteditable="false" style="border:1px dashed #f0a500;border-radius:6px;padding:8px 10px;margin:6px 0;background:rgba(240,165,0,0.08);">` +
+      `<div class="hlb-editor-label" style="color:#f0a500;font-size:11px;font-weight:700;margin-bottom:4px;">🔒 HIDDEN LINK — visible after reply / for Premium users</div>` +
+      `<div class="hlb-editor-content"><a href="${url.trim()}" target="_blank" rel="noopener noreferrer">${label}</a></div>` +
+      `</div><div><br></div>`;
+
+    document.execCommand("insertHTML", false, wrappedHTML);
+    editorRef.current?.focus();
+  }
+
   function addPollOption() {
     if (pollOptions.length < 10) setPollOptions([...pollOptions, ""]);
   }
@@ -121,7 +137,7 @@ export default function CreateThreadModal({
 
   async function handlePost() {
     setError("");
-    const content = editorRef.current?.innerHTML.trim() || "";
+    const rawHTML = editorRef.current?.innerHTML.trim() || "";
     const plainText = editorRef.current?.innerText.trim() || "";
 
     if (!title.trim()) {
@@ -150,6 +166,23 @@ export default function CreateThreadModal({
 
     setPosting(true);
 
+    // ── Extract hidden blocks from content before saving ──
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(rawHTML, "text/html");
+    const hiddenEls = Array.from(doc.querySelectorAll(".hlb-pending"));
+    const hiddenContents: string[] = [];
+
+    hiddenEls.forEach((el, idx) => {
+      const contentEl = el.querySelector(".hlb-editor-content");
+      hiddenContents.push(contentEl ? contentEl.innerHTML : el.innerHTML);
+      const placeholder = doc.createElement("div");
+      placeholder.className = "hlb-placeholder";
+      placeholder.setAttribute("data-hlb-temp-index", String(idx));
+      el.replaceWith(placeholder);
+    });
+
+    const content = doc.body.innerHTML;
+
     const { data: threadData, error: threadError } = await supabase
       .from("threads")
       .insert({
@@ -170,8 +203,42 @@ export default function CreateThreadModal({
 
     if (threadError || !threadData) {
       setPosting(false);
-      setError(threadError?.message || "Failed to create thread.");
+      if (threadError?.message?.includes("DAILY_LIMIT_REACHED")) {
+        setError("Aap ne aaj ki 17 posts/threads ki limit poori kar li hai. Kal try karein ya premium upgrade karein.");
+      } else {
+        setError(threadError?.message || "Failed to create thread.");
+      }
       return;
+    }
+
+    // ── Insert hidden blocks (now that we have the real thread_id) ──
+    if (hiddenContents.length > 0) {
+      const blockIdMap: Record<number, string> = {};
+
+      for (let i = 0; i < hiddenContents.length; i++) {
+        const { data: blockData, error: blockError } = await supabase
+          .from("thread_hidden_blocks")
+          .insert({ thread_id: threadData.id, content: hiddenContents[i] })
+          .select()
+          .single();
+
+        if (!blockError && blockData) {
+          blockIdMap[i] = blockData.id;
+        }
+      }
+
+      const doc2 = parser.parseFromString(content, "text/html");
+      doc2.querySelectorAll(".hlb-placeholder").forEach(el => {
+        const idx = el.getAttribute("data-hlb-temp-index");
+        const blockId = idx !== null ? blockIdMap[Number(idx)] : undefined;
+        if (blockId) {
+          el.setAttribute("data-hlb-id", blockId);
+          el.removeAttribute("data-hlb-temp-index");
+        }
+      });
+      const finalContent = doc2.body.innerHTML;
+
+      await supabase.from("threads").update({ content: finalContent }).eq("id", threadData.id);
     }
 
     // Poll
@@ -325,6 +392,7 @@ export default function CreateThreadModal({
             <ToolBtn label="🔗" title="Insert Link" onClick={handleLinkInsert} />
             <ToolBtn label="🖼️" title="Insert Image" onClick={handleImageInsert} />
             <input ref={imageInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={onImageSelected} />
+            <ToolBtn label="🔒" title="Insert a Hidden Link (visible instantly for Premium, after reply for Free users)" color="#f0a500" onClick={insertHiddenLink} />
             <Divider />
             <ToolBtn label="•≡" title="Bullet List" onClick={() => exec("insertUnorderedList")} />
             <ToolBtn label="1≡" title="Numbered List" onClick={() => exec("insertOrderedList")} />
@@ -349,6 +417,10 @@ export default function CreateThreadModal({
             }}
             className="rte-editable"
           />
+
+          <div style={{ fontSize: 11, color: "#4a7a94", marginTop: 6 }}>
+            💡 Tip: 🔒 button dabao aur link daalo — wo Premium users ko turant dikhega, aur Free users ko sirf tab jab woh is thread par comment kar dein.
+          </div>
 
           <style>{`
             .rte-editable:empty:before {

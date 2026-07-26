@@ -18,6 +18,15 @@ const ROLE_BADGES: Record<string, { label: string; color: string; icon: string }
 
 const SUBSCRIPTION_ROLES = ["vip", "vip+", "lifetime", "admin"];
 
+interface UserAward {
+  award_id: string;
+  name: string;
+  description: string;
+  icon: string;
+  icon_color: string;
+  image_url: string | null;
+}
+
 function timeAgo(dateStr: string | null) {
   if (!dateStr) return "Never";
   const diff = Date.now() - new Date(dateStr).getTime();
@@ -54,6 +63,9 @@ export default function ProfilePageClient({ targetUsername }: { targetUsername: 
   const [music, setMusic] = useState<{ song_url: string; song_title: string; autoplay: boolean } | null>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const [playing, setPlaying] = useState(false);
+
+  // Awards (real earned awards — replaces hardcoded emoji)
+  const [userAwards, setUserAwards] = useState<UserAward[]>([]);
 
   // Settings panel
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -146,6 +158,12 @@ export default function ProfilePageClient({ targetUsername }: { targetUsername: 
       .eq("profile_user_id", profileData.id)
       .order("visited_at", { ascending: false }).limit(5);
     if (visitData) setVisitors(visitData as ProfileVisitor[]);
+
+    // Awards — real earned awards, public RPC, works for any visitor
+    const { data: awardsData } = await supabase.rpc("get_user_awards", {
+      target_user_id: profileData.id,
+    });
+    if (awardsData) setUserAwards(awardsData as UserAward[]);
 
     // Music
     const { data: musicData } = await supabase
@@ -427,7 +445,7 @@ export default function ProfilePageClient({ targetUsername }: { targetUsername: 
               </>
             ) : (
               currentUserId && (
-                <Link href="/" style={{ background: "#0d2030", border: "1px solid #1a3042", borderRadius: 7, padding: "9px 18px", color: "#00b4d8", fontSize: 13, fontWeight: 700, textDecoration: "none", display: "inline-block" }}>
+                <Link href={`/messages/new?to=${encodeURIComponent(profile.username || "")}`} style={{ background: "#0d2030", border: "1px solid #1a3042", borderRadius: 7, padding: "9px 18px", color: "#00b4d8", fontSize: 13, fontWeight: 700, textDecoration: "none", display: "inline-block" }}>
                   💬 Message
                 </Link>
               )
@@ -512,11 +530,34 @@ export default function ProfilePageClient({ targetUsername }: { targetUsername: 
           <div>
             <BoxHeader title="Awards" color="#a855f7" />
             <BoxBody>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {["🏅", "🔥", "🛡️"].map((icon, i) => (
-                  <div key={i} style={{ width: 38, height: 38, borderRadius: 8, background: "#0d2030", border: "1px solid #1a3042", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>{icon}</div>
-                ))}
-              </div>
+              {userAwards.length === 0 ? (
+                <p style={{ fontSize: 12, color: "#3d6a80", margin: 0 }}>No awards yet.</p>
+              ) : (
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {userAwards.map((award) => (
+                    <div
+                      key={award.award_id}
+                      title={`${award.name} — ${award.description}`}
+                      style={{
+                        width: 38, height: 38, borderRadius: 8,
+                        background: `${award.icon_color}1a`,
+                        border: `1px solid ${award.icon_color}44`,
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        fontSize: 18, cursor: "default", overflow: "hidden",
+                      }}
+                    >
+                      {award.image_url ? (
+                        <img src={award.image_url} alt={award.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                      ) : (
+                        award.icon
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              <Link href="/awards" style={{ display: "inline-block", marginTop: 10, fontSize: 11.5, color: "#a855f7", textDecoration: "none" }}>
+                View all awards →
+              </Link>
             </BoxBody>
 
             <div style={{ marginTop: 16 }}>

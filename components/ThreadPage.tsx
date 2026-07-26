@@ -7,6 +7,7 @@ import EmojiPicker, { EmojiClickData, Theme } from "emoji-picker-react";
 import Navbar from "./Navbar";
 import Footer from "./Footbar";
 import PremiumOfferBanner from "@/components/PremiumOfferBanner";
+import DailyLimitBadge from "@/components/DailyLimitBadge";
 
 interface ThreadPageProps {
   threadId: string;
@@ -72,10 +73,48 @@ function timeAgo(dateStr: string) {
   return new Date(dateStr).toLocaleDateString();
 }
 
+// ── Resolve hidden link blocks in thread content ──
+async function resolveHiddenBlocks(html: string): Promise<string> {
+  if (!html.includes("data-hlb-id")) return html;
+
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, "text/html");
+  const blocks = Array.from(doc.querySelectorAll("[data-hlb-id]"));
+  if (blocks.length === 0) return html;
+
+  await Promise.all(
+    blocks.map(async (el) => {
+      const blockId = el.getAttribute("data-hlb-id");
+      if (!blockId) return;
+
+      const { data: content } = await supabase.rpc("get_hidden_block", { block_id: blockId });
+
+      if (content) {
+        el.outerHTML =
+          `<div style="border-left:3px solid #22c55e;padding:10px 12px;margin:10px 0;background:rgba(34,197,94,0.06);border-radius:6px;">` +
+          `<div style="color:#22c55e;font-weight:700;font-size:10.5px;letter-spacing:0.5px;margin-bottom:6px;">🔓 UNLOCKED CONTENT</div>` +
+          content +
+          `</div>`;
+      } else {
+        el.outerHTML =
+          `<div style="border:1px dashed #f0a500;border-radius:8px;padding:16px;margin:12px 0;background:rgba(240,165,0,0.06);text-align:center;">` +
+          `<div style="font-size:22px;">🔒</div>` +
+          `<div style="color:#f0a500;font-weight:700;font-size:13px;margin-top:6px;">Hidden Content</div>` +
+          `<div style="color:#9ab0bf;font-size:12px;margin-top:4px;line-height:1.6;">Reply to this thread to unlock this content instantly, or upgrade to Premium to view without replying.</div>` +
+          `<a href="#reply-box" style="display:inline-block;margin-top:10px;background:#6c63ff;color:#fff;padding:7px 16px;border-radius:6px;font-size:12px;font-weight:700;text-decoration:none;">Jump to Reply Box</a>` +
+          `</div>`;
+      }
+    })
+  );
+
+  return doc.body.innerHTML;
+}
+
 export default function ThreadPage({ threadId }: ThreadPageProps) {
   const router = useRouter();
 
   const [thread, setThread] = useState<ThreadDetail | null>(null);
+  const [resolvedContent, setResolvedContent] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [replies, setReplies] = useState<Reply[]>([]);
   const [replyText, setReplyText] = useState("");
@@ -146,7 +185,10 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
       thread_id_input: threadId,
     });
     if (threadData && threadData[0]) {
-      setThread(threadData[0] as ThreadDetail);
+      const t = threadData[0] as ThreadDetail;
+      setThread(t);
+      const resolved = await resolveHiddenBlocks(t.content);
+      setResolvedContent(resolved);
     }
 
     const { data: replyData } = await supabase.rpc("get_thread_replies", {
@@ -283,7 +325,11 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
 
       if (error) {
         console.error("Reply insert error:", error.message);
-        setErrorMsg("Could not post your reply. Please try again.");
+        if (error.message.includes("DAILY_LIMIT_REACHED")) {
+          setErrorMsg("Aap ne aaj ki 17 posts/comments ki limit poori kar li hai. Kal try karein ya premium upgrade karein.");
+        } else {
+          setErrorMsg("Could not post your reply. Please try again.");
+        }
         return;
       }
 
@@ -354,6 +400,8 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
 
     if (!error) {
       setThread(prev => prev ? { ...prev, title: editTitle.trim(), content: newContent } : prev);
+      const resolved = await resolveHiddenBlocks(newContent);
+      setResolvedContent(resolved);
       setEditingThread(false);
     }
   }
@@ -539,7 +587,7 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
                 <div
                   className="rte-content"
                   style={{ lineHeight: 1.8, fontSize: 14.5 }}
-                  dangerouslySetInnerHTML={{ __html: thread.content }}
+                  dangerouslySetInnerHTML={{ __html: resolvedContent || thread.content }}
                 />
               )}
 
@@ -584,10 +632,13 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
         </div>
 
         {/* ── REPLIES ── */}
-        <div style={{ background: "#0a1520", border: "1px solid #1a2535", borderRadius: 10, padding: 20 }}>
-          <h2 style={{ marginBottom: 20, fontSize: 18 }}>
-            Replies {replies.length > 0 && `(${replies.length})`}
-          </h2>
+        <div id="reply-box" style={{ background: "#0a1520", border: "1px solid #1a2535", borderRadius: 10, padding: 20 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 20 }}>
+            <h2 style={{ margin: 0, fontSize: 18 }}>
+              Replies {replies.length > 0 && `(${replies.length})`}
+            </h2>
+            {currentUserId && <DailyLimitBadge />}
+          </div>
 
           {/* Reply composer */}
           {currentUserId ? (
