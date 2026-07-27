@@ -94,6 +94,7 @@ export default function CreateAccountPage() {
 
     setLoading(true);
 
+    // 1) Username already taken?
     const { data: existing } = await supabase
       .from("profiles")
       .select("username")
@@ -105,6 +106,7 @@ export default function CreateAccountPage() {
       return fail("Username already taken. Choose another.");
     }
 
+    // 2) Create auth user
     const { data, error: signUpError } = await supabase.auth.signUp({
       email: email.trim(),
       password,
@@ -116,12 +118,33 @@ export default function CreateAccountPage() {
       return fail(signUpError.message);
     }
 
-    if (data.user) {
-      const { error: profileError } = await supabase.from("profiles").upsert(
-        { id: data.user.id, username: username.trim(), join_date: new Date().toISOString() },
-        { onConflict: "id" }
-      );
-      if (profileError) console.error("Profile upsert error:", profileError.message);
+    if (!data.user) {
+      setLoading(false);
+      return fail("Something went wrong creating your account. Please try again.");
+    }
+
+    // 3) IMPORTANT: Supabase returns a fake/dummy user object (to prevent email
+    // enumeration attacks) when the email is ALREADY REGISTERED, instead of
+    // throwing an error. That fake user's id does NOT exist in auth.users,
+    // so inserting into `profiles` with it fails the foreign key constraint.
+    // The reliable way to detect this is: identities array is empty.
+    const isExistingUser = Array.isArray(data.user.identities) && data.user.identities.length === 0;
+
+    if (isExistingUser) {
+      setLoading(false);
+      return fail("This email is already registered. Please log in instead.");
+    }
+
+    // 4) Create the profile row
+    const { error: profileError } = await supabase.from("profiles").upsert(
+      { id: data.user.id, username: username.trim(), join_date: new Date().toISOString() },
+      { onConflict: "id" }
+    );
+
+    if (profileError) {
+      setLoading(false);
+      console.error("Profile upsert error:", profileError.message);
+      return fail("Account created, but profile setup failed. Please contact support.");
     }
 
     setLoading(false);
