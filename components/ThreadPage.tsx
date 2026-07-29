@@ -8,6 +8,8 @@ import Navbar from "./Navbar";
 import Footer from "./Footbar";
 import PremiumOfferBanner from "@/components/PremiumOfferBanner";
 import DailyLimitBadge from "@/components/DailyLimitBadge";
+import Navbar from "./Navbar";
+import Footbar from "./Footbar";
 
 interface ThreadPageProps {
   threadId: string;
@@ -912,3 +914,5 @@ const removeBtnStyle: React.CSSProperties = {
   border: "1px solid #2a3a4f", color: "#fff", borderRadius: "50%",
   width: 22, height: 22, cursor: "pointer", fontSize: 12, lineHeight: 1,
 };
+
+<Footbar/>

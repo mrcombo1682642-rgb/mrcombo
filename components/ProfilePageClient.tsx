@@ -27,6 +27,22 @@ interface UserAward {
   image_url: string | null;
 }
 
+interface UserGroup {
+  id: string;
+  name: string;
+  color: string;
+  icon: string;
+  joined_at: string;
+}
+
+interface Usergroup {
+  id: string;
+  name: string;
+  color: string;
+  icon: string;
+  description: string | null;
+}
+
 function timeAgo(dateStr: string | null) {
   if (!dateStr) return "Never";
   const diff = Date.now() - new Date(dateStr).getTime();
@@ -58,6 +74,7 @@ export default function ProfilePageClient({ targetUsername }: { targetUsername: 
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [isOwner, setIsOwner] = useState(false);
   const [isOnline, setIsOnline] = useState(false);
+  const [isAdminViewer, setIsAdminViewer] = useState(false);
 
   // Music
   const [music, setMusic] = useState<{ song_url: string; song_title: string; autoplay: boolean } | null>(null);
@@ -66,6 +83,12 @@ export default function ProfilePageClient({ targetUsername }: { targetUsername: 
 
   // Awards (real earned awards — replaces hardcoded emoji)
   const [userAwards, setUserAwards] = useState<UserAward[]>([]);
+
+  // Usergroups (real groups — Diamond/Nova/Coder etc.)
+  const [userGroups, setUserGroups] = useState<UserGroup[]>([]);
+  const [allGroups, setAllGroups] = useState<Usergroup[]>([]);
+  const [groupManagerOpen, setGroupManagerOpen] = useState(false);
+  const [groupActionLoading, setGroupActionLoading] = useState<string | null>(null);
 
   // Settings panel
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -133,13 +156,18 @@ export default function ProfilePageClient({ targetUsername }: { targetUsername: 
       setIsOnline(diffMin < 5);
     }
 
-    // Track visit
+    // Track visit + check viewer role (for admin controls)
     let visitorUsername = "Guest";
+    let viewerRole = "member";
     if (uid) {
       const { data: myProfile } = await supabase
-        .from("profiles").select("username").eq("id", uid).single();
+        .from("profiles").select("username, role").eq("id", uid).single();
       visitorUsername = myProfile?.username || "Unknown";
+      viewerRole = myProfile?.role || "member";
     }
+    const adminViewer = viewerRole === "admin";
+    setIsAdminViewer(adminViewer);
+
     supabase.rpc("track_profile_visit", {
       target_user_id: profileData.id,
       visitor_id_input: uid,
@@ -165,6 +193,19 @@ export default function ProfilePageClient({ targetUsername }: { targetUsername: 
     });
     if (awardsData) setUserAwards(awardsData as UserAward[]);
 
+    // Usergroups — real earned/assigned groups, public RPC
+    const { data: groupsData } = await supabase.rpc("get_user_groups", {
+      target_user_id: profileData.id,
+    });
+    setUserGroups((groupsData as UserGroup[]) || []);
+
+    // If admin is viewing, also load the full list of groups (to manage)
+    if (adminViewer) {
+      const { data: allGroupsData } = await supabase
+        .from("usergroups").select("*").order("sort_order");
+      setAllGroups((allGroupsData as Usergroup[]) || []);
+    }
+
     // Music
     const { data: musicData } = await supabase
       .from("profile_music").select("*").eq("user_id", profileData.id).single();
@@ -189,6 +230,34 @@ export default function ProfilePageClient({ targetUsername }: { targetUsername: 
     }
 
     setLoading(false);
+  }
+
+  async function reloadUserGroups() {
+    if (!profile) return;
+    const { data } = await supabase.rpc("get_user_groups", { target_user_id: profile.id });
+    setUserGroups((data as UserGroup[]) || []);
+  }
+
+  async function assignGroup(groupId: string) {
+    if (!profile) return;
+    setGroupActionLoading(groupId);
+    await supabase.rpc("admin_assign_usergroup", {
+      target_user_id: profile.id,
+      usergroup_id_input: groupId,
+    });
+    await reloadUserGroups();
+    setGroupActionLoading(null);
+  }
+
+  async function removeGroup(groupId: string) {
+    if (!profile) return;
+    setGroupActionLoading(groupId);
+    await supabase.rpc("admin_remove_usergroup", {
+      target_user_id: profile.id,
+      usergroup_id_input: groupId,
+    });
+    await reloadUserGroups();
+    setGroupActionLoading(null);
   }
 
   async function uploadImage(file: File, type: "avatar" | "cover") {
@@ -426,6 +495,15 @@ export default function ProfilePageClient({ targetUsername }: { targetUsername: 
                 {badge.icon} {badge.label}
               </span>
               {isSubscriber && <span style={{ fontSize: 10, color: "#f59e0b", background: "rgba(245,158,11,0.1)", border: "1px solid rgba(245,158,11,0.3)", borderRadius: 4, padding: "2px 8px", fontWeight: 700 }}>SUBSCRIBER</span>}
+              {userGroups.map(g => (
+                <span key={g.id} title={`Joined ${timeAgo(g.joined_at)}`} style={{
+                  fontSize: 10, fontWeight: 700, color: g.color,
+                  background: `${g.color}1a`, border: `1px solid ${g.color}44`,
+                  borderRadius: 4, padding: "2px 8px",
+                }}>
+                  {g.icon} {g.name}
+                </span>
+              ))}
             </div>
             <div style={{ fontSize: 13, color: isOnline ? "#22c55e" : "#4a7a94", marginTop: 4 }}>
               {isOnline ? "● Online now" : `Last seen ${timeAgo(profile.last_seen)}`}
@@ -434,6 +512,11 @@ export default function ProfilePageClient({ targetUsername }: { targetUsername: 
           </div>
 
           <div style={{ display: "flex", gap: 8, paddingTop: 12, flexWrap: "wrap" }}>
+            {isAdminViewer && (
+              <button onClick={() => setGroupManagerOpen(true)} style={{ background: "#0d2030", border: "1px solid #1a3042", borderRadius: 7, padding: "9px 18px", color: "#f0a500", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                🏷️ Manage Groups
+              </button>
+            )}
             {isOwner ? (
               <>
                 <button onClick={() => setSettingsOpen(true)} style={{ background: "#6c63ff", border: "none", borderRadius: 7, padding: "9px 18px", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
@@ -587,6 +670,55 @@ export default function ProfilePageClient({ targetUsername }: { targetUsername: 
           </div>
         </div>
       </div>
+
+      {/* ── GROUP MANAGER MODAL (admin only) ── */}
+      {groupManagerOpen && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 500, background: "rgba(0,0,0,0.75)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setGroupManagerOpen(false)}>
+          <div style={{ background: "#0a1520", border: "1px solid #1a2535", borderRadius: 12, width: "100%", maxWidth: 420, maxHeight: "80vh", overflowY: "auto" }} onClick={e => e.stopPropagation()}>
+            <div style={{ background: "#f0a500", padding: "14px 18px", borderRadius: "12px 12px 0 0", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span style={{ fontWeight: 700, fontSize: 15, color: "#000" }}>🏷️ Manage Groups — {profile.username}</span>
+              <button onClick={() => setGroupManagerOpen(false)} style={{ background: "rgba(0,0,0,0.15)", border: "none", borderRadius: 6, width: 28, height: 28, color: "#000", fontSize: 16, cursor: "pointer" }}>✕</button>
+            </div>
+            <div style={{ padding: 16 }}>
+              {allGroups.length === 0 ? (
+                <p style={{ fontSize: 13, color: "#4a7a94", textAlign: "center" }}>No usergroups created yet.</p>
+              ) : (
+                allGroups.map(g => {
+                  const isMember = userGroups.some(ug => ug.id === g.id);
+                  const isLoading = groupActionLoading === g.id;
+                  return (
+                    <div key={g.id} style={{
+                      display: "flex", alignItems: "center", gap: 10, padding: "10px 12px",
+                      borderRadius: 8, marginBottom: 8, background: "#050a0f", border: "1px solid #1a2535",
+                    }}>
+                      <span style={{
+                        fontSize: 11, fontWeight: 700, color: g.color, background: `${g.color}1a`,
+                        border: `1px solid ${g.color}44`, borderRadius: 4, padding: "3px 9px", flexShrink: 0,
+                      }}>
+                        {g.icon} {g.name}
+                      </span>
+                      <div style={{ flex: 1, fontSize: 11, color: "#4a7a94" }}>{g.description}</div>
+                      <button
+                        onClick={() => isMember ? removeGroup(g.id) : assignGroup(g.id)}
+                        disabled={isLoading}
+                        style={{
+                          background: isMember ? "#ef444422" : "#22c55e22",
+                          border: `1px solid ${isMember ? "#ef444444" : "#22c55e44"}`,
+                          borderRadius: 6, padding: "6px 12px", fontSize: 11.5, fontWeight: 700,
+                          color: isMember ? "#ef4444" : "#22c55e", cursor: isLoading ? "not-allowed" : "pointer",
+                          opacity: isLoading ? 0.5 : 1, flexShrink: 0,
+                        }}
+                      >
+                        {isLoading ? "..." : isMember ? "Remove" : "Add"}
+                      </button>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── SETTINGS MODAL ── */}
       {settingsOpen && (

@@ -68,7 +68,9 @@ export default function Navbar() {
   const [extrasOpen, setExtrasOpen] = useState(false);
   const [desktopExtrasOpen, setDesktopExtrasOpen] = useState(false);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const [desktopDropdownPos, setDesktopDropdownPos] = useState({ top: 0, left: 0 });
   const desktopExtrasRef = useRef<HTMLDivElement>(null);
+  const desktopExtrasBtnRef = useRef<HTMLButtonElement>(null);
   const profileMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -87,15 +89,34 @@ export default function Navbar() {
     return () => document.removeEventListener("mousedown", handler);
   }, [sidebarOpen]);
 
+  // Close desktop Extras dropdown on outside click
   useEffect(() => {
     if (!desktopExtrasOpen) return;
     const handler = (e: MouseEvent) => {
-      if (desktopExtrasRef.current && !desktopExtrasRef.current.contains(e.target as Node)) {
-        setDesktopExtrasOpen(false);
-      }
+      const t = e.target as Node;
+      const clickedButton = desktopExtrasBtnRef.current?.contains(t);
+      const clickedDropdown = (document.getElementById("desktop-extras-dropdown"))?.contains(t);
+      if (!clickedButton && !clickedDropdown) setDesktopExtrasOpen(false);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
+  }, [desktopExtrasOpen]);
+
+  // Reposition dropdown on scroll/resize while open
+  useEffect(() => {
+    if (!desktopExtrasOpen) return;
+    const reposition = () => {
+      if (!desktopExtrasBtnRef.current) return;
+      const rect = desktopExtrasBtnRef.current.getBoundingClientRect();
+      setDesktopDropdownPos({ top: rect.bottom + 8, left: rect.left });
+    };
+    reposition();
+    window.addEventListener("scroll", reposition, true);
+    window.addEventListener("resize", reposition);
+    return () => {
+      window.removeEventListener("scroll", reposition, true);
+      window.removeEventListener("resize", reposition);
+    };
   }, [desktopExtrasOpen]);
 
   useEffect(() => {
@@ -160,6 +181,25 @@ export default function Navbar() {
 
     return () => subscription.unsubscribe();
   }, []);
+
+  // ── GLOBAL ONLINE HEARTBEAT ──────────────────────────────────
+  // Navbar renders on every page, so this keeps `last_seen` fresh
+  // no matter where the logged-in user is browsing (not just their
+  // own profile page). This is what powers "online now" everywhere.
+  useEffect(() => {
+    if (!user) return;
+
+    async function heartbeat() {
+      await supabase
+        .from("profiles")
+        .update({ last_seen: new Date().toISOString() })
+        .eq("id", user.id);
+    }
+
+    heartbeat(); // immediately on mount / user change
+    const interval = setInterval(heartbeat, 60000); // every 60s
+    return () => clearInterval(interval);
+  }, [user]);
 
   return (
     <>
@@ -248,11 +288,13 @@ export default function Navbar() {
         .desktop-link .link-text{display:none}
         .desktop-link .arrow{width:12px;height:12px;opacity:.6;transition:transform .2s;flex-shrink:0}
         .desktop-link .arrow.open{transform:rotate(180deg)}
-        .desktop-dropdown{position:absolute;top:calc(100% + 8px);left:0;background:var(--bg2);
+        /* NOTE: position is now set inline (fixed) via JS so it can escape
+           the .desktop-nav overflow-x:auto clipping. Class kept for styling only. */
+        .desktop-dropdown{background:var(--bg2);
           border:1px solid var(--border);border-radius:8px;min-width:170px;padding:6px;
-          display:flex;flex-direction:column;gap:2px;box-shadow:0 12px 28px rgba(0,0,0,.5);z-index:600;}
+          display:flex;flex-direction:column;gap:2px;box-shadow:0 12px 28px rgba(0,0,0,.5);z-index:900;}
         .desktop-dropdown a{padding:8px 12px;border-radius:6px;color:var(--muted);font-size:13px;
-          text-decoration:none;transition:all .2s;}
+          text-decoration:none;transition:all .2s;display:block;}
         .desktop-dropdown a:hover{background:var(--surface);color:#fff}
 
         @media(min-width:1024px){
@@ -366,22 +408,17 @@ export default function Navbar() {
           {NAV_LINKS.map(link => (
             link.hasDropdown ? (
               <div key={link.label} style={{ position: "relative" }}>
-                <button className="desktop-link" onClick={() => setDesktopExtrasOpen(v => !v)}>
+                <button
+                  ref={desktopExtrasBtnRef}
+                  className="desktop-link"
+                  onClick={() => setDesktopExtrasOpen(v => !v)}
+                >
                   {link.icon}
                   <span className="link-text">{link.label}</span>
                   <svg className={`arrow ${desktopExtrasOpen ? "open" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <polyline points="6 9 12 15 18 9"/>
                   </svg>
                 </button>
-                {desktopExtrasOpen && (
-                  <div className="desktop-dropdown">
-                    {link.dropdown?.map(item => (
-                      <Link key={item.label} href={item.href} onClick={() => setDesktopExtrasOpen(false)}>
-                        {item.label}
-                      </Link>
-                    ))}
-                  </div>
-                )}
               </div>
             ) : (
               <Link key={link.label} href={link.href} className="desktop-link" title={link.label}>
@@ -391,6 +428,22 @@ export default function Navbar() {
             )
           ))}
         </div>
+
+        {/* Desktop Extras dropdown — rendered with position:fixed so the
+            .desktop-nav overflow-x:auto container can no longer clip it */}
+        {desktopExtrasOpen && (
+          <div
+            id="desktop-extras-dropdown"
+            className="desktop-dropdown"
+            style={{ position: "fixed", top: desktopDropdownPos.top, left: desktopDropdownPos.left }}
+          >
+            {NAV_LINKS.find(l => l.hasDropdown)?.dropdown?.map(item => (
+              <Link key={item.label} href={item.href} onClick={() => setDesktopExtrasOpen(false)}>
+                {item.label}
+              </Link>
+            ))}
+          </div>
+        )}
 
         <div className="nav-actions">
           {!user ? (

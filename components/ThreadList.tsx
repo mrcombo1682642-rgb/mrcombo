@@ -3,6 +3,8 @@ import { useRouter } from "next/navigation";
 import type { ThreadListItem } from "@/lib/types";
 import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
+import Navbar from "./Navbar";
+import Footbar from "./Footbar";
 
 interface ThreadListProps {
   threads: ThreadListItem[];
@@ -81,7 +83,7 @@ export default function ThreadList({ threads }: ThreadListProps) {
       </div>
     );
   }
-
+    <Navbar/>
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       {threadList.map((thread) => (
@@ -154,5 +156,8 @@ export default function ThreadList({ threads }: ThreadListProps) {
         </div>
       ))}
     </div>
+      
+    
   );
 }
+<Footbar/>

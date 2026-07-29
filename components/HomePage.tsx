@@ -81,17 +81,6 @@ const FORUM_SECTIONS = [
   },
 ];
 
-const ONLINE_ROLES = [
-  { label: "Admin", count: 2, color: "#e74c3c" }, { label: "Reverser", count: null, color: "#27ae60" },
-  { label: "Moderator", count: null, color: "#00b4d8" }, { label: "Developer", count: null, color: "#6c63ff" },
-  { label: "Gladiator", count: 4, color: "#f0a500" }, { label: "Glory", count: 2, color: "#e91e8c" },
-  { label: "Legendary", count: 4, color: "#f0a500" }, { label: "Coder", count: null, color: "#6c63ff" },
-  { label: "Royal", count: 3, color: "#00b4d8" }, { label: "Designer", count: 2, color: "#e91e8c" },
-  { label: "Diamond", count: 40, color: "#00b4d8" }, { label: "Nova", count: 85, color: "#f0a500" },
-  { label: "Contributor", count: 5, color: "#f0a500" }, { label: "V.I.P", count: 7, color: "#e91e8c" },
-  { label: "Member", count: 284, color: "#c8dde8" },
-];
-
 const AVATAR_COLORS = ["#00b4d8", "#e91e8c", "#f0a500", "#6c63ff", "#27ae60", "#e74c3c"];
 function randomColor() {
   return AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)];
@@ -241,13 +230,16 @@ export default function HomePage() {
   const [dmInput, setDmInput] = useState("");
   const [dmSending, setDmSending] = useState(false);
 
-  // ── NEW: Sidebar / desktop layout live data ──
+  // ── Sidebar / desktop layout live data ──
   const [announcements, setAnnouncements] = useState<any[]>([]);
   const [activities, setActivities] = useState<any[]>([]);
   const [onlineStaff, setOnlineStaff] = useState<any[]>([]);
   const [homeStats, setHomeStats] = useState<any>(null);
   const [categoryStats, setCategoryStats] = useState<Record<string, any>>({});
   const [mobileExtrasOpen, setMobileExtrasOpen] = useState(false);
+
+  // ── LIVE online-users-by-role (replaces old hardcoded ONLINE_ROLES array) ──
+  const [onlineRoles, setOnlineRoles] = useState<{ role: string; cnt: number }[]>([]);
 
   // Admin announcement form
   const [announceFormOpen, setAnnounceFormOpen] = useState(false);
@@ -291,7 +283,7 @@ export default function HomePage() {
     supabase.from("banned_users").select("*").order("created_at", { ascending: false }).then(({ data }) => setBannedUsers(data || []));
   }, []);
 
-  // ── NEW: Load sidebar / stats data ──
+  // ── Load sidebar / stats / online-roles data ──
   async function loadSidebarData() {
     const { data: ann } = await supabase
       .from("site_announcements")
@@ -315,10 +307,16 @@ export default function HomePage() {
       catStats.forEach((c: any) => { map[c.category] = c; });
       setCategoryStats(map);
     }
+
+    const { data: rolesData } = await supabase.rpc("get_online_users_by_role");
+    setOnlineRoles(rolesData || []);
   }
 
   useEffect(() => {
     loadSidebarData();
+    // Refresh stats + online roles every 60s so counts stay live without a manual refresh
+    const interval = setInterval(loadSidebarData, 60000);
+    return () => clearInterval(interval);
   }, []);
 
   async function handleAddAnnouncement() {
@@ -925,9 +923,11 @@ export default function HomePage() {
                 </div>
                 {showOnline && (
                   <div className="hp-roles">
-                    {ONLINE_ROLES.map(r => (
-                      <span key={r.label} style={{ color: r.color, fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>
-                        {r.label}{r.count ? `(${r.count})` : ""}
+                    {onlineRoles.length === 0 ? (
+                      <span style={{ color: "rgba(255,255,255,0.6)", fontSize: 12.5 }}>No one online right now.</span>
+                    ) : onlineRoles.map(r => (
+                      <span key={r.role} style={{ color: ROLE_COLORS[r.role] || "#c8dde8", fontSize: 12.5, fontWeight: 600, cursor: "default", textTransform: "capitalize" }}>
+                        {r.role} ({r.cnt})
                       </span>
                     ))}
                   </div>

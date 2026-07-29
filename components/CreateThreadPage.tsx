@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-
+import Navbar from "./Navbar"
+import Footbar from "./Footbar"
 export default function CreateThreadPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -57,6 +58,8 @@ export default function CreateThreadPage() {
 
     router.push(`/thread/${data.id}`);
   }
+
+  <Navbar/>
 
   return (
     <div
@@ -114,3 +117,4 @@ export default function CreateThreadPage() {
     </div>
   );
 }
+<Footbar/>

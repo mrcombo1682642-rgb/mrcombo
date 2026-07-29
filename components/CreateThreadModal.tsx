@@ -4,6 +4,8 @@ import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import type { User } from "@supabase/supabase-js";
+import Navbar from "./Navbar"
+import Footbar from "./Footbar"
 
 interface CreateThreadModalProps {
   isOpen: boolean;
@@ -264,7 +266,8 @@ export default function CreateThreadModal({
     onClose();
     router.push(`/thread/${threadData.id}`);
   }
-
+  
+  
   return (
     <div
       style={{
@@ -275,6 +278,8 @@ export default function CreateThreadModal({
       }}
       onClick={onClose}
     >
+      <Navbar/>
+
       <div
         style={{
           background: "#0a1520", border: "1px solid #1a2535", borderRadius: 12,
@@ -647,6 +652,7 @@ function Checkbox({ checked, onChange }: { checked: boolean; onChange: () => voi
       }}
     >
       {checked && <span style={{ color: "#fff", fontSize: 12 }}>✓</span>}
+    <Footbar/>
     </div>
   );
 }
