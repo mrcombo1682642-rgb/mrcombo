@@ -4,12 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import EmojiPicker, { EmojiClickData, Theme } from "emoji-picker-react";
-import Navbar from "./Navbar";
-import Footer from "./Footbar";
 import PremiumOfferBanner from "@/components/PremiumOfferBanner";
 import DailyLimitBadge from "@/components/DailyLimitBadge";
-import Navbar from "./Navbar";
-import Footbar from "./Footbar";
 
 interface ThreadPageProps {
   threadId: string;
@@ -472,9 +468,10 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
   const canPost = (replyText.trim().length > 0 || imageFile || videoFile) && !posting;
   const threadBadge = ROLE_BADGES[thread.role || "member"] || ROLE_BADGES.member;
 
+
+
   return (
     <div style={{ minHeight: "100vh", background: "#050a0f", color: "#e7e7e7" }}>
-      <Navbar />
       
 
       <div style={{ maxWidth: 900, margin: "0 auto", padding: "80px 16px" }}>
@@ -851,7 +848,7 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
         }
       `}</style>
 
-      <Footer />
+      
     </div>
   );
 }
@@ -915,4 +912,3 @@ const removeBtnStyle: React.CSSProperties = {
   width: 22, height: 22, cursor: "pointer", fontSize: 12, lineHeight: 1,
 };
 
-<Footbar/>

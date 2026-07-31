@@ -59,8 +59,7 @@ export default function CreateThreadPage() {
     router.push(`/thread/${data.id}`);
   }
 
-  <Navbar/>
-
+  
   return (
     <div
       style={{
@@ -117,4 +116,3 @@ export default function CreateThreadPage() {
     </div>
   );
 }
-<Footbar/>

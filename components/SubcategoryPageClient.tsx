@@ -35,6 +35,11 @@ export default function SubcategoryPageClient({
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState<any>(null);
 
+  // Current user role + like state (for list-row like/unlike + admin remove)
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [currentUserRole, setCurrentUserRole] = useState<string | null>(null);
+  const [likedThreadIds, setLikedThreadIds] = useState<Set<string>>(new Set());
+
   const [sortField, setSortField] = useState<SortField>("last_post");
   const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
   const [page, setPage] = useState(1);
@@ -56,12 +61,90 @@ export default function SubcategoryPageClient({
     setLoading(false);
   }
 
+  async function loadCurrentUser() {
+    const { data } = await supabase.auth.getUser();
+    const uid = data.user?.id || null;
+    setUser(data.user);
+    setCurrentUserId(uid);
+    if (uid) {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("id", uid)
+        .single();
+      setCurrentUserRole(profile?.role || "member");
+    } else {
+      setCurrentUserRole(null);
+    }
+  }
+
   useEffect(() => {
     loadThreads();
-    supabase.auth.getUser().then(({ data }) => setUser(data.user));
+    loadCurrentUser();
     setPage(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug, subcategory]);
+
+  // Fetch which of the currently-loaded threads the user has liked
+  useEffect(() => {
+    async function loadLikedThreads() {
+      if (!currentUserId || allThreads.length === 0) {
+        setLikedThreadIds(new Set());
+        return;
+      }
+      const ids = allThreads.map((t) => t.id);
+      const { data } = await supabase
+        .from("thread_likes")
+        .select("thread_id")
+        .eq("user_id", currentUserId)
+        .in("thread_id", ids);
+      if (data) setLikedThreadIds(new Set(data.map((r: any) => r.thread_id)));
+    }
+    loadLikedThreads();
+  }, [allThreads, currentUserId]);
+
+  function isAdminOrMod() {
+    return currentUserRole === "admin" || currentUserRole === "moderator";
+  }
+
+  // ── Like / Unlike from the list row ──
+  async function toggleThreadLike(e: React.MouseEvent, threadId: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!currentUserId) return;
+
+    const isLiked = likedThreadIds.has(threadId);
+
+    if (isLiked) {
+      await supabase.from("thread_likes").delete()
+        .eq("thread_id", threadId).eq("user_id", currentUserId);
+      setLikedThreadIds(prev => { const s = new Set(prev); s.delete(threadId); return s; });
+      setAllThreads(prev => prev.map(t =>
+        t.id === threadId ? { ...t, likes_count: Math.max(0, (t.likes_count || 0) - 1) } : t
+      ));
+    } else {
+      await supabase.from("thread_likes").insert({ thread_id: threadId, user_id: currentUserId });
+      setLikedThreadIds(prev => new Set(prev).add(threadId));
+      setAllThreads(prev => prev.map(t =>
+        t.id === threadId ? { ...t, likes_count: (t.likes_count || 0) + 1 } : t
+      ));
+    }
+  }
+
+  // ── Admin/mod: remove thread directly from the list ──
+  async function handleDeleteThread(e: React.MouseEvent, threadId: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!confirm("Delete this thread permanently? This cannot be undone.")) return;
+
+    const { error } = await supabase.from("threads").delete().eq("id", threadId);
+    if (error) {
+      console.error("Delete thread error:", error.message);
+      alert("Could not delete thread.");
+      return;
+    }
+    setAllThreads(prev => prev.filter(t => t.id !== threadId));
+  }
 
   function sortThreads(list: ThreadListItem[]) {
     const sorted = [...list];
@@ -204,7 +287,7 @@ export default function SubcategoryPageClient({
           style={{
             background: "#080e18", border: "1px solid #0d2030", borderTop: "none",
             padding: "10px 18px", display: "grid",
-            gridTemplateColumns: "1fr 90px 90px 90px 150px",
+            gridTemplateColumns: "1fr 90px 90px 110px 150px",
             gap: 12, fontSize: 11, fontWeight: 700, color: "#4a7a94",
             letterSpacing: 0.5, textTransform: "uppercase",
           }}
@@ -230,95 +313,123 @@ export default function SubcategoryPageClient({
               No threads yet. Be the first to start one!
             </div>
           ) : (
-            pageThreads.map((t, i) => (
-              <Link key={t.id} href={`/thread/${t.id}`} style={{ textDecoration: "none", display: "block" }}>
-                <div
-                  className="thread-row"
-                  style={{
-                    padding: "12px 18px",
-                    borderBottom: i !== pageThreads.length - 1 ? "1px solid #0a1520" : "none",
-                    display: "grid",
-                    gridTemplateColumns: "1fr 90px 90px 90px 150px",
-                    gap: 12, alignItems: "center",
-                    background: t.pinned ? "#0d1326" : "transparent",
-                    transition: "background 0.15s",
-                  }}
-                  onMouseEnter={e => (e.currentTarget.style.background = t.pinned ? "#121a38" : "#0a1520")}
-                  onMouseLeave={e => (e.currentTarget.style.background = t.pinned ? "#0d1326" : "transparent")}
-                >
-                  {/* Thread / Author */}
-                  <div style={{ display: "flex", gap: 10, alignItems: "flex-start", minWidth: 0 }}>
-                    <div style={{ fontSize: 18, flexShrink: 0, marginTop: 2 }}>
-                      {t.locked ? "🔒" : t.pinned ? "📌" : "👤"}
-                    </div>
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                        {t.pinned && (
+            pageThreads.map((t, i) => {
+              const isLiked = likedThreadIds.has(t.id);
+              return (
+                <Link key={t.id} href={`/thread/${t.id}`} style={{ textDecoration: "none", display: "block" }}>
+                  <div
+                    className="thread-row"
+                    style={{
+                      padding: "12px 18px",
+                      borderBottom: i !== pageThreads.length - 1 ? "1px solid #0a1520" : "none",
+                      display: "grid",
+                      gridTemplateColumns: "1fr 90px 90px 110px 150px",
+                      gap: 12, alignItems: "center",
+                      background: t.pinned ? "#0d1326" : "transparent",
+                      transition: "background 0.15s",
+                    }}
+                    onMouseEnter={e => (e.currentTarget.style.background = t.pinned ? "#121a38" : "#0a1520")}
+                    onMouseLeave={e => (e.currentTarget.style.background = t.pinned ? "#0d1326" : "transparent")}
+                  >
+                    {/* Thread / Author */}
+                    <div style={{ display: "flex", gap: 10, alignItems: "flex-start", minWidth: 0 }}>
+                      <div style={{ fontSize: 18, flexShrink: 0, marginTop: 2 }}>
+                        {t.locked ? "🔒" : t.pinned ? "📌" : "👤"}
+                      </div>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                          {t.pinned && (
+                            <span style={{
+                              fontSize: 10, fontWeight: 700, color: "#6c63ff",
+                              background: "rgba(108,99,255,0.15)", padding: "1px 6px", borderRadius: 3,
+                            }}>PINNED</span>
+                          )}
                           <span style={{
-                            fontSize: 10, fontWeight: 700, color: "#6c63ff",
-                            background: "rgba(108,99,255,0.15)", padding: "1px 6px", borderRadius: 3,
-                          }}>PINNED</span>
-                        )}
-                        <span style={{
-                          fontSize: 14, fontWeight: 600, color: "#e4e4e7",
-                          overflow: "hidden", textOverflow: "ellipsis",
-                        }}>
-                          {t.title}
-                        </span>
+                            fontSize: 14, fontWeight: 600, color: "#e4e4e7",
+                            overflow: "hidden", textOverflow: "ellipsis",
+                          }}>
+                            {t.title}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: 11.5, color: "#4a7a94", marginTop: 3 }}>
+                          Started by{" "}
+                          <span style={{ color: "#ff9b6b", fontWeight: 600 }}>{t.username || "Unknown"}</span>
+                          {" · "}{timeAgo(t.created_at)}
+                        </div>
                       </div>
-                      <div style={{ fontSize: 11.5, color: "#4a7a94", marginTop: 3 }}>
-                        Started by{" "}
-                        <span style={{ color: "#ff9b6b", fontWeight: 600 }}>{t.username || "Unknown"}</span>
-                        {" · "}{timeAgo(t.created_at)}
+                    </div>
+
+                    {/* Views */}
+                    <div className="thread-stat" style={{ textAlign: "center", fontSize: 13, color: "#9ab0bf" }}>
+                      <span className="mobile-label">Views: </span>{t.views_count}
+                    </div>
+
+                    {/* Replies */}
+                    <div className="thread-stat" style={{ textAlign: "center", fontSize: 13, color: "#9ab0bf" }}>
+                      <span className="mobile-label">Replies: </span>{t.reply_count}
+                    </div>
+
+                    {/* Likes + admin remove */}
+                    <div className="thread-stat" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, flexWrap: "wrap" }}>
+                      <span className="mobile-label">Likes: </span>
+                      <button
+                        onClick={(e) => toggleThreadLike(e, t.id)}
+                        disabled={!currentUserId}
+                        title={currentUserId ? (isLiked ? "Unlike" : "Like") : "Login to like"}
+                        style={{
+                          display: "flex", alignItems: "center", gap: 5,
+                          background: isLiked ? "rgba(231,76,140,0.15)" : "transparent",
+                          border: `1px solid ${isLiked ? "#e74c8c" : "#1a2535"}`,
+                          borderRadius: 5, padding: "3px 8px",
+                          color: isLiked ? "#e74c8c" : "#9ab0bf",
+                          fontSize: 12, fontWeight: 700,
+                          cursor: currentUserId ? "pointer" : "default",
+                        }}
+                      >
+                        {isLiked ? "❤️" : "🤍"} {t.likes_count || 0}
+                      </button>
+
+                      {isAdminOrMod() && (
+                        <button
+                          onClick={(e) => handleDeleteThread(e, t.id)}
+                          title="Delete thread (admin)"
+                          style={{
+                            background: "transparent",
+                            border: "1px solid #ef444444",
+                            borderRadius: 5, padding: "3px 7px",
+                            color: "#ef4444", fontSize: 12, fontWeight: 700,
+                            cursor: "pointer",
+                          }}
+                        >
+                          🗑️
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Last Post */}
+                    <div className="thread-stat" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <div style={{
+                        width: 26, height: 26, borderRadius: 5, flexShrink: 0,
+                        background: "#1a2535", display: "flex", alignItems: "center",
+                        justifyContent: "center", fontSize: 11, fontWeight: 700, color: "#6cc6ff",
+                        overflow: "hidden",
+                      }}>
+                        {t.avatar_url
+                          ? <img src={t.avatar_url} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                          : (t.username || "?").slice(0, 2).toUpperCase()
+                        }
+                      </div>
+                      <div style={{ fontSize: 11, color: "#6a8a9a", minWidth: 0 }}>
+                        <div style={{ color: "#9ab0bf", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {t.username || "Unknown"}
+                        </div>
+                        <div>{timeAgo(t.created_at)}</div>
                       </div>
                     </div>
                   </div>
-
-                  {/* Views */}
-                  <div className="thread-stat" style={{ textAlign: "center", fontSize: 13, color: "#9ab0bf" }}>
-                    <span className="mobile-label">Views: </span>{t.views_count}
-                  </div>
-
-                  {/* Replies */}
-                  <div className="thread-stat" style={{ textAlign: "center", fontSize: 13, color: "#9ab0bf" }}>
-                    <span className="mobile-label">Replies: </span>{t.reply_count}
-                  </div>
-
-                  {/* Likes */}
-                  <div className="thread-stat" style={{ textAlign: "center" }}>
-                    <span className="mobile-label">Likes: </span>
-                    <span style={{
-                      fontSize: 12, fontWeight: 700, color: (t.likes_count || 0) > 0 ? "#22c55e" : "#4a7a94",
-                      background: (t.likes_count || 0) > 0 ? "rgba(34,197,94,0.12)" : "transparent",
-                      padding: "2px 8px", borderRadius: 4,
-                    }}>
-                      {t.likes_count || 0}
-                    </span>
-                  </div>
-
-                  {/* Last Post */}
-                  <div className="thread-stat" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <div style={{
-                      width: 26, height: 26, borderRadius: 5, flexShrink: 0,
-                      background: "#1a2535", display: "flex", alignItems: "center",
-                      justifyContent: "center", fontSize: 11, fontWeight: 700, color: "#6cc6ff",
-                      overflow: "hidden",
-                    }}>
-                      {t.avatar_url
-                        ? <img src={t.avatar_url} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                        : (t.username || "?").slice(0, 2).toUpperCase()
-                      }
-                    </div>
-                    <div style={{ fontSize: 11, color: "#6a8a9a", minWidth: 0 }}>
-                      <div style={{ color: "#9ab0bf", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {t.username || "Unknown"}
-                      </div>
-                      <div>{timeAgo(t.created_at)}</div>
-                    </div>
-                  </div>
-                </div>
-              </Link>
-            ))
+                </Link>
+              );
+            })
           )}
         </div>
 

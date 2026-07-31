@@ -67,7 +67,7 @@ type SettingsTab = "profile" | "username" | "music" | "account";
 
 export default function ProfilePageClient({ targetUsername }: { targetUsername: string }) {
   const [profile, setProfile] = useState<Profile | null>(null);
-  const [stats, setStats] = useState<ProfileStats | null>(null);
+  const [stats, setStats] = useState<ProfileStats & { vouches_count?: number } | null>(null);
   const [visitors, setVisitors] = useState<ProfileVisitor[]>([]);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
@@ -174,7 +174,8 @@ export default function ProfilePageClient({ targetUsername }: { targetUsername: 
       visitor_username_input: visitorUsername,
     });
 
-    // Stats
+    // Stats — now returns posts_count, threads_count, likes_count,
+    // reported_posts, and vouches_count (all live from real tables).
     const { data: statsData } = await supabase.rpc("get_profile_stats", {
       profile_user_id: profileData.id,
     });
@@ -575,7 +576,7 @@ export default function ProfilePageClient({ targetUsername }: { targetUsername: 
                 <StatRow icon="❤️" label="Likes" value={stats?.likes_count ?? 0} />
                 <StatRow icon="⭐" label="Reputation" value={profile.reputation ?? 0} />
                 <StatRow icon="🚩" label="Reported Posts" value={stats?.reported_posts ?? 0} />
-                <StatRow icon="🏆" label="Vouches" value={0} />
+                <StatRow icon="🏆" label="Vouches" value={stats?.vouches_count ?? 0} />
               </div>
             </BoxBody>
 

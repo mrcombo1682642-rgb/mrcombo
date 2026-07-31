@@ -66,16 +66,54 @@ export default function LoginPage() {
     setTimeout(() => setShake(false), 400);
   }
 
+  // Self-heal: if this account somehow doesn't have a `profiles` row yet
+  // (e.g. it was created before the trigger fix, or slipped through),
+  // create one now instead of letting the user hit "user not found"
+  // everywhere else in the app.
+  async function ensureProfileExists(user: { id: string; email?: string | null; user_metadata?: any }) {
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("id")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    if (profile) return; // already fine
+
+    const fallbackUsername =
+      (user.user_metadata?.username as string | undefined)?.trim() ||
+      (user.email ? user.email.split("@")[0] : "user") + "_" + user.id.slice(0, 4);
+
+    await supabase.from("profiles").upsert(
+      { id: user.id, username: fallbackUsername, join_date: new Date().toISOString(), role: "member" },
+      { onConflict: "id" }
+    );
+  }
+
   const handleLogin = async () => {
     setError("");
     if (!email.trim() || !password.trim()) return fail("Please fill in all fields.");
     setLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({
+    const { data, error } = await supabase.auth.signInWithPassword({
       email: email.trim(),
       password,
     });
+
+    if (error) {
+      setLoading(false);
+      return fail(error.message);
+    }
+
+    if (data.user) {
+      try {
+        await ensureProfileExists(data.user);
+      } catch (e) {
+        // Non-fatal — worst case the self-heal didn't run, but we still
+        // let the user in rather than blocking login over this.
+        console.error("Profile self-heal failed:", e);
+      }
+    }
+
     setLoading(false);
-    if (error) return fail(error.message);
     window.location.href = "/";
   };
 
