@@ -248,6 +248,13 @@ export default function HomePage() {
   const [announceLink, setAnnounceLink] = useState("");
   const [announceSaving, setAnnounceSaving] = useState(false);
 
+  // ── Staff management (admin) ──
+  const [staffList, setStaffList] = useState<any[]>([]); // full roster, for admin panel
+  const [staffFormOpen, setStaffFormOpen] = useState(false);
+  const [staffUsernameInput, setStaffUsernameInput] = useState("");
+  const [staffRoleInput, setStaffRoleInput] = useState("Moderator");
+  const [staffSaving, setStaffSaving] = useState(false);
+
   const pinned = PINNED[chatTab];
 
   // Auth check
@@ -283,7 +290,7 @@ export default function HomePage() {
     supabase.from("banned_users").select("*").order("created_at", { ascending: false }).then(({ data }) => setBannedUsers(data || []));
   }, []);
 
-  // ── Load sidebar / stats / online-roles data ──
+  // ── Load sidebar / stats / online-roles / staff data ──
   async function loadSidebarData() {
     const { data: ann } = await supabase
       .from("site_announcements")
@@ -297,6 +304,9 @@ export default function HomePage() {
 
     const { data: staff } = await supabase.rpc("get_online_staff");
     setOnlineStaff(staff || []);
+
+    const { data: staffFull } = await supabase.from("staff_members").select("*").order("created_at", { ascending: false });
+    setStaffList(staffFull || []);
 
     const { data: stats } = await supabase.rpc("get_home_stats");
     if (stats && stats[0]) setHomeStats(stats[0]);
@@ -314,7 +324,7 @@ export default function HomePage() {
 
   useEffect(() => {
     loadSidebarData();
-    // Refresh stats + online roles every 60s so counts stay live without a manual refresh
+    // Refresh stats + online roles + online staff every 60s so counts stay live without a manual refresh
     const interval = setInterval(loadSidebarData, 60000);
     return () => clearInterval(interval);
   }, []);
@@ -346,6 +356,50 @@ export default function HomePage() {
   async function handleDeleteAnnouncement(id: string) {
     await supabase.from("site_announcements").delete().eq("id", id);
     setAnnouncements(prev => prev.filter(a => a.id !== id));
+  }
+
+  // ── Staff: add / remove (admin only — RLS also enforces this server-side) ──
+  async function handleAddStaff() {
+    if (!staffUsernameInput.trim()) return;
+    setStaffSaving(true);
+
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("id, username")
+      .eq("username", staffUsernameInput.trim())
+      .single();
+
+    if (!profile) {
+      alert("User not found. Username sahi likhein.");
+      setStaffSaving(false);
+      return;
+    }
+
+    const { error } = await supabase.from("staff_members").insert({
+      user_id: profile.id,
+      username: profile.username,
+      role_label: staffRoleInput.trim() || "Moderator",
+      added_by: user?.id,
+    });
+
+    if (error) {
+      alert(error.message.includes("duplicate") ? "Ye user already staff hai." : error.message);
+    } else {
+      setStaffUsernameInput("");
+      setStaffRoleInput("Moderator");
+      const { data: staffFull } = await supabase.from("staff_members").select("*").order("created_at", { ascending: false });
+      setStaffList(staffFull || []);
+      const { data: staffOnline } = await supabase.rpc("get_online_staff");
+      setOnlineStaff(staffOnline || []);
+    }
+    setStaffSaving(false);
+  }
+
+  async function handleRemoveStaff(id: string) {
+    await supabase.from("staff_members").delete().eq("id", id);
+    setStaffList(prev => prev.filter(s => s.id !== id));
+    const { data: staffOnline } = await supabase.rpc("get_online_staff");
+    setOnlineStaff(staffOnline || []);
   }
 
   // General chat messages + realtime
@@ -1013,22 +1067,71 @@ export default function HomePage() {
                 </div>
               </div>
 
-              {/* Online Staff — live */}
+              {/* Online Staff — live + admin manage + click-to-DM */}
               <div className="side-box">
-                <div className="side-box-hdr"><span>🛡️ Online Staff</span></div>
+                <div className="side-box-hdr">
+                  <span>🛡️ Online Staff</span>
+                  {isAdmin && (
+                    <button className="side-box-hdr-add" onClick={() => setStaffFormOpen(v => !v)}>
+                      {staffFormOpen ? "✕ Close" : "⚙️ Manage"}
+                    </button>
+                  )}
+                </div>
+
+                {isAdmin && staffFormOpen && (
+                  <div className="side-form">
+                    <input
+                      className="side-input"
+                      placeholder="Username to add as staff"
+                      value={staffUsernameInput}
+                      onChange={e => setStaffUsernameInput(e.target.value)}
+                    />
+                    <input
+                      className="side-input"
+                      placeholder="Role label (e.g. Moderator, Admin)"
+                      value={staffRoleInput}
+                      onChange={e => setStaffRoleInput(e.target.value)}
+                    />
+                    <button
+                      onClick={handleAddStaff}
+                      disabled={staffSaving || !staffUsernameInput.trim()}
+                      style={{ background: "#6c63ff", border: "none", borderRadius: 6, padding: "8px 0", color: "#fff", fontSize: 12.5, fontWeight: 700, cursor: "pointer", opacity: staffSaving || !staffUsernameInput.trim() ? 0.5 : 1 }}
+                    >
+                      {staffSaving ? "Adding..." : "+ Add Staff Member"}
+                    </button>
+
+                    {staffList.length > 0 && (
+                      <div style={{ marginTop: 4, borderTop: "1px solid #0d2030", paddingTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+                        {staffList.map(s => (
+                          <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <span style={{ flex: 1, fontSize: 12, color: "#c8dde8" }}>
+                              {s.username} <span style={{ color: "#4a7a94" }}>({s.role_label})</span>
+                            </span>
+                            <button className="side-del" onClick={() => handleRemoveStaff(s.id)}>✕</button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 <div className="side-box-body">
                   {onlineStaff.length === 0 ? (
                     <div className="side-empty">No staff online right now.</div>
                   ) : onlineStaff.map((s, i) => (
-                    <a key={i} href={`/profile/${s.username}`} style={{ textDecoration: "none" }}>
-                      <div className="side-staff-item">
-                        <span className="side-staff-dot" />
-                        <Av l={s.username} size={26} />
-                        <span style={{ fontSize: 12.5, fontWeight: 600, color: ROLE_COLORS[s.role] || "#c8dde8" }}>
-                          {s.username} <span style={{ color: "#4a7a94", fontWeight: 400 }}>({s.role})</span>
-                        </span>
-                      </div>
-                    </a>
+                    <div
+                      key={i}
+                      className="side-staff-item"
+                      style={{ cursor: "pointer" }}
+                      onClick={() => openDm(s.username)}
+                      title={`DM ${s.username}`}
+                    >
+                      <span className="side-staff-dot" />
+                      <Av l={s.username} size={26} />
+                      <span style={{ fontSize: 12.5, fontWeight: 600, color: ROLE_COLORS[(s.role_label || "").toLowerCase()] || "#c8dde8" }}>
+                        {s.username} <span style={{ color: "#4a7a94", fontWeight: 400 }}>({s.role_label})</span>
+                      </span>
+                    </div>
                   ))}
                 </div>
               </div>
