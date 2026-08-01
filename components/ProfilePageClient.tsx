@@ -67,7 +67,7 @@ type SettingsTab = "profile" | "username" | "music" | "account";
 
 export default function ProfilePageClient({ targetUsername }: { targetUsername: string }) {
   const [profile, setProfile] = useState<Profile | null>(null);
-  const [stats, setStats] = useState<ProfileStats & { vouches_count?: number } | null>(null);
+  const [stats, setStats] = useState<ProfileStats | null>(null);
   const [visitors, setVisitors] = useState<ProfileVisitor[]>([]);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
@@ -75,6 +75,11 @@ export default function ProfilePageClient({ targetUsername }: { targetUsername: 
   const [isOwner, setIsOwner] = useState(false);
   const [isOnline, setIsOnline] = useState(false);
   const [isAdminViewer, setIsAdminViewer] = useState(false);
+
+  // Profile likes ("like this profile")
+  const [profileLikedByMe, setProfileLikedByMe] = useState(false);
+  const [profileLikesCount, setProfileLikesCount] = useState(0);
+  const [likingProfile, setLikingProfile] = useState(false);
 
   // Music
   const [music, setMusic] = useState<{ song_url: string; song_title: string; autoplay: boolean } | null>(null);
@@ -180,6 +185,24 @@ export default function ProfilePageClient({ targetUsername }: { targetUsername: 
       profile_user_id: profileData.id,
     });
     if (statsData && statsData[0]) setStats(statsData[0] as ProfileStats);
+
+    // Profile likes — how many people liked this profile, and did
+    // the current viewer already like it.
+    const { count: profileLikeCount } = await supabase
+      .from("profile_likes")
+      .select("id", { count: "exact", head: true })
+      .eq("profile_user_id", profileData.id);
+    setProfileLikesCount(profileLikeCount || 0);
+
+    if (uid && uid !== profileData.id) {
+      const { data: myLike } = await supabase
+        .from("profile_likes")
+        .select("id")
+        .eq("profile_user_id", profileData.id)
+        .eq("user_id", uid)
+        .maybeSingle();
+      setProfileLikedByMe(!!myLike);
+    }
 
     // Visitors
     const { data: visitData } = await supabase
@@ -375,6 +398,35 @@ export default function ProfilePageClient({ targetUsername }: { targetUsername: 
     setMusic(null); setMusicUrl(""); setMusicTitle(""); setMusicAutoplay(false);
   }
 
+  async function toggleProfileLike() {
+    if (!currentUserId || !profile || currentUserId === profile.id || likingProfile) return;
+    setLikingProfile(true);
+
+    if (profileLikedByMe) {
+      await supabase.from("profile_likes").delete()
+        .eq("profile_user_id", profile.id).eq("user_id", currentUserId);
+      setProfileLikedByMe(false);
+      setProfileLikesCount(c => Math.max(0, c - 1));
+    } else {
+      await supabase.from("profile_likes").insert({
+        profile_user_id: profile.id,
+        user_id: currentUserId,
+      });
+      setProfileLikedByMe(true);
+      setProfileLikesCount(c => c + 1);
+    }
+
+    // Reputation is recalculated server-side by a trigger, but refresh
+    // the displayed reputation/likes_received so the header updates too.
+    const { data: refreshedProfile } = await supabase
+      .from("profiles").select("reputation, likes_received").eq("id", profile.id).single();
+    if (refreshedProfile) {
+      setProfile(prev => prev ? { ...prev, ...refreshedProfile } as Profile : prev);
+    }
+
+    setLikingProfile(false);
+  }
+
   async function handleLogout() {
     await supabase.auth.signOut();
     window.location.href = "/";
@@ -529,9 +581,23 @@ export default function ProfilePageClient({ targetUsername }: { targetUsername: 
               </>
             ) : (
               currentUserId && (
-                <Link href={`/messages/new?to=${encodeURIComponent(profile.username || "")}`} style={{ background: "#0d2030", border: "1px solid #1a3042", borderRadius: 7, padding: "9px 18px", color: "#00b4d8", fontSize: 13, fontWeight: 700, textDecoration: "none", display: "inline-block" }}>
-                  💬 Message
-                </Link>
+                <>
+                  <button
+                    onClick={toggleProfileLike}
+                    disabled={likingProfile}
+                    style={{
+                      background: profileLikedByMe ? "rgba(231,76,140,0.15)" : "#0d2030",
+                      border: `1px solid ${profileLikedByMe ? "#e74c8c" : "#1a3042"}`,
+                      borderRadius: 7, padding: "9px 18px", color: profileLikedByMe ? "#e74c8c" : "#9ab0bf",
+                      fontSize: 13, fontWeight: 700, cursor: likingProfile ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    {profileLikedByMe ? "❤️" : "🤍"} Like{profileLikesCount > 0 ? ` (${profileLikesCount})` : ""}
+                  </button>
+                  <Link href={`/messages/new?to=${encodeURIComponent(profile.username || "")}`} style={{ background: "#0d2030", border: "1px solid #1a3042", borderRadius: 7, padding: "9px 18px", color: "#00b4d8", fontSize: 13, fontWeight: 700, textDecoration: "none", display: "inline-block" }}>
+                    💬 Message
+                  </Link>
+                </>
               )
             )}
           </div>
