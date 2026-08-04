@@ -29,6 +29,11 @@ interface ThreadDetail {
   signature: string | null;
   join_date: string | null;
   likes_count: number;
+  author_rep: number;
+  author_likes_given: number;
+  author_posts_count: number;
+  author_threads_count: number;
+  author_last_seen: string | null;
 }
 
 interface Reply {
@@ -45,10 +50,18 @@ interface Reply {
   role: string | null;
   badge: string | null;
   likes_count: number;
+  author_rep: number;
+  author_likes_given: number;
+  author_posts_count: number;
+  author_threads_count: number;
+  author_last_seen: string | null;
 }
 
 const STORAGE_BUCKET = "thread-attachments";
 const MAX_FILE_SIZE_MB = 25;
+const ONLINE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
+const HEARTBEAT_INTERVAL_MS = 60 * 1000; // 60 seconds
+const POSTS_PER_PAGE = 10;
 
 const ROLE_BADGES: Record<string, { label: string; color: string; icon: string }> = {
   admin:     { label: "Admin",     color: "#ff6b6b", icon: "👑" },
@@ -69,6 +82,18 @@ function timeAgo(dateStr: string) {
   const days = Math.floor(hours / 24);
   if (days < 30) return `${days}d ago`;
   return new Date(dateStr).toLocaleDateString();
+}
+
+function formatFullDate(dateStr: string) {
+  return new Date(dateStr).toLocaleString("en-GB", {
+    day: "2-digit", month: "2-digit", year: "numeric",
+    hour: "2-digit", minute: "2-digit",
+  });
+}
+
+function isOnline(lastSeen: string | null) {
+  if (!lastSeen) return false;
+  return Date.now() - new Date(lastSeen).getTime() < ONLINE_THRESHOLD_MS;
 }
 
 // ── Resolve hidden link blocks in thread content ──
@@ -108,6 +133,142 @@ async function resolveHiddenBlocks(html: string): Promise<string> {
   return doc.body.innerHTML;
 }
 
+// ── Reusable profile sidebar (used for the OP and every reply) ──
+function PostAuthorSidebar({
+  username,
+  avatarUrl,
+  role,
+  online,
+  rep,
+  likesGiven,
+  postsCount,
+  threadsCount,
+  onClick,
+}: {
+  username: string | null;
+  avatarUrl: string | null;
+  role: string | null;
+  online: boolean;
+  rep: number;
+  likesGiven: number;
+  postsCount: number;
+  threadsCount: number;
+  onClick: () => void;
+}) {
+  const badge = ROLE_BADGES[role || "member"] || ROLE_BADGES.member;
+
+  return (
+    <div style={{ width: 140, flexShrink: 0, textAlign: "center" }}>
+      <div
+        onClick={onClick}
+        style={{
+          width: 72, height: 72, borderRadius: 6, margin: "0 auto 8px",
+          border: `2px solid ${badge.color}`, overflow: "hidden",
+          background: "#1a2535", display: "flex", alignItems: "center",
+          justifyContent: "center", fontSize: 22, fontWeight: 700,
+          color: badge.color, cursor: username ? "pointer" : "default",
+        }}
+      >
+        {avatarUrl
+          ? <img src={avatarUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+          : (username || "?").slice(0, 2).toUpperCase()
+        }
+      </div>
+
+      <div
+        onClick={onClick}
+        style={{ fontSize: 13, fontWeight: 700, color: "#6cc6ff", cursor: username ? "pointer" : "default" }}
+      >
+        {username || "Unknown"}
+      </div>
+
+      <div style={{
+        display: "flex", alignItems: "center", justifyContent: "center", gap: 4,
+        fontSize: 11, marginTop: 3, color: online ? "#22c55e" : "#4a7a94", fontWeight: 600,
+      }}>
+        <span style={{
+          width: 7, height: 7, borderRadius: "50%",
+          background: online ? "#22c55e" : "#4a7a94",
+          boxShadow: online ? "0 0 5px #22c55e" : "none",
+        }} />
+        {online ? "Online" : "Offline"}
+      </div>
+
+      <div style={{
+        marginTop: 8, paddingTop: 8, borderTop: "1px dashed #1a2535",
+        display: "flex", justifyContent: "center", gap: 14,
+      }}>
+        <StatCell label="REP" value={rep} color="#f59e0b" />
+        <StatCell label="LIKES" value={likesGiven} color="#e74c8c" />
+      </div>
+
+      <div style={{
+        marginTop: 8, display: "inline-block", fontSize: 10.5, fontWeight: 700,
+        color: badge.color, background: `${badge.color}1a`,
+        border: `1px solid ${badge.color}44`, borderRadius: 4, padding: "2px 10px",
+      }}>
+        {badge.icon} {badge.label}
+      </div>
+
+      <div style={{
+        marginTop: 10, paddingTop: 8, borderTop: "1px dashed #1a2535",
+        display: "grid", gridTemplateColumns: "1fr 1fr", rowGap: 6, columnGap: 4,
+      }}>
+        <StatCell label="POSTS" value={postsCount} color="#6cc6ff" />
+        <StatCell label="THREADS" value={threadsCount} color="#a855f7" />
+      </div>
+    </div>
+  );
+}
+
+function StatCell({ label, value, color }: { label: string; value: number; color: string }) {
+  return (
+    <div>
+      <div style={{ fontSize: 13, fontWeight: 800, color }}>{value}</div>
+      <div style={{ fontSize: 8.5, color: "#4a7a94", fontWeight: 700, letterSpacing: 0.4 }}>{label}</div>
+    </div>
+  );
+}
+
+// ── Pagination bar (1  2  3 ... Next >) ──
+function PaginationBar({
+  page, totalPages, onChange,
+}: { page: number; totalPages: number; onChange: (p: number) => void }) {
+  if (totalPages <= 1) return null;
+  const pages = Array.from({ length: totalPages }, (_, i) => i + 1);
+
+  return (
+    <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+      {pages.map(p => (
+        <button
+          key={p}
+          onClick={() => onChange(p)}
+          style={{
+            minWidth: 30, height: 30, borderRadius: 6, fontSize: 12.5, fontWeight: 700,
+            cursor: "pointer",
+            background: p === page ? "#6c63ff" : "#0d1c28",
+            border: `1px solid ${p === page ? "#6c63ff" : "#1a2535"}`,
+            color: p === page ? "#fff" : "#9ab0bf",
+          }}
+        >
+          {p}
+        </button>
+      ))}
+      {page < totalPages && (
+        <button
+          onClick={() => onChange(page + 1)}
+          style={{
+            height: 30, padding: "0 12px", borderRadius: 6, fontSize: 12.5, fontWeight: 700,
+            cursor: "pointer", background: "#0d1c28", border: "1px solid #1a2535", color: "#9ab0bf",
+          }}
+        >
+          Next ›
+        </button>
+      )}
+    </div>
+  );
+}
+
 export default function ThreadPage({ threadId }: ThreadPageProps) {
   const router = useRouter();
 
@@ -116,12 +277,14 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
   const [loading, setLoading] = useState(true);
   const [replies, setReplies] = useState<Reply[]>([]);
   const [replyText, setReplyText] = useState("");
+  const [page, setPage] = useState(1);
 
   // Current user state
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [currentUserRole, setCurrentUserRole] = useState<string | null>(null);
   const [threadLikedByMe, setThreadLikedByMe] = useState(false);
   const [likedReplies, setLikedReplies] = useState<Set<string>>(new Set());
+  const [shareCopied, setShareCopied] = useState(false);
 
   // Attachment state
   const [imageFile, setImageFile] = useState<File | null>(null);
@@ -152,16 +315,35 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
   const videoInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    setPage(1);
     loadThread();
     loadCurrentUser();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [threadId]);
 
+  // ── Heartbeat: keep last_seen fresh while user is on the page ──
+  useEffect(() => {
+    if (!currentUserId) return;
+    supabase.rpc("touch_last_seen");
+    const interval = setInterval(() => {
+      supabase.rpc("touch_last_seen");
+    }, HEARTBEAT_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, [currentUserId]);
+
   async function loadCurrentUser() {
-    const { data } = await supabase.auth.getUser();
-    const uid = data.user?.id || null;
-    setCurrentUserId(uid);
-    if (uid) {
+    try {
+      const { data, error } = await supabase.auth.getUser();
+      if (error) {
+        console.error("Failed to fetch current user:", error);
+        setCurrentUserId(null);
+        return;
+      }
+
+      const uid = data?.user?.id || null;
+      setCurrentUserId(uid);
+      if (!uid) return;
+
       const { data: profile } = await supabase
         .from("profiles").select("role").eq("id", uid).single();
       setCurrentUserRole(profile?.role || "member");
@@ -173,6 +355,9 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
       const { data: replyLikes } = await supabase
         .from("reply_likes").select("reply_id").eq("user_id", uid);
       if (replyLikes) setLikedReplies(new Set(replyLikes.map(r => r.reply_id)));
+    } catch (error) {
+      console.error("Error loading current user:", error);
+      setCurrentUserId(null);
     }
   }
 
@@ -335,7 +520,9 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
       clearImage();
       clearVideo();
       setShowEmojiPicker(false);
-      loadThread();
+      await loadThread();
+      // jump to the last page so the user sees their new reply
+      setPage(p => p); // page recalculated below once replies state updates
     } finally {
       setPosting(false);
     }
@@ -370,6 +557,17 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
       await supabase.from("reply_likes").insert({ reply_id: replyId, user_id: currentUserId });
       setLikedReplies(prev => new Set(prev).add(replyId));
       setReplies(prev => prev.map(r => r.id === replyId ? { ...r, likes_count: r.likes_count + 1 } : r));
+    }
+  }
+
+  // ── Share (copy link) ──
+  async function handleShare() {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      setShareCopied(true);
+      setTimeout(() => setShareCopied(false), 2000);
+    } catch {
+      // clipboard unavailable — silently ignore
     }
   }
 
@@ -466,171 +664,305 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
   }
 
   const canPost = (replyText.trim().length > 0 || imageFile || videoFile) && !posting;
-  const threadBadge = ROLE_BADGES[thread.role || "member"] || ROLE_BADGES.member;
+  const threadOnline = isOnline(thread.author_last_seen);
 
-
+  // ── Pagination math: OP always occupies slot #1 on page 1 ──
+  const totalPostsCount = 1 + replies.length;
+  const totalPages = Math.max(1, Math.ceil(totalPostsCount / POSTS_PER_PAGE));
+  const safePage = Math.min(page, totalPages);
+  const showOP = safePage === 1;
+  const replyStartIndex = safePage === 1 ? 0 : (safePage - 1) * POSTS_PER_PAGE - 1;
+  const replyCountThisPage = safePage === 1 ? POSTS_PER_PAGE - 1 : POSTS_PER_PAGE;
+  const visibleReplies = replies.slice(replyStartIndex, replyStartIndex + replyCountThisPage);
+  const opPostNumber = 1;
+  const firstReplyNumber = safePage === 1 ? 2 : replyStartIndex + 2;
 
   return (
     <div style={{ minHeight: "100vh", background: "#050a0f", color: "#e7e7e7" }}>
-      
 
       <div style={{ maxWidth: 900, margin: "0 auto", padding: "80px 16px" }}>
 
         {/* Breadcrumb */}
-        <div style={{ fontSize: 13, color: "#4a7a94", marginBottom: 16 }}>
+        <div style={{ fontSize: 13, color: "#4a7a94", marginBottom: 10 }}>
           <span style={{ cursor: "pointer" }} onClick={() => router.push("/")}>Home</span>
           {" > "}
           <span style={{ cursor: "pointer" }} onClick={() => router.push(`/forum/${thread.category}`)}>
             {thread.category}
           </span>
           {" > "}
-          <span style={{ cursor: "pointer" }} onClick={() => router.push(`/forum/${thread.category}/${thread.subcategory}`)}>
+          <span
+            style={{ cursor: "pointer", color: "#6cc6ff" }}
+            onClick={() => router.push(`/forum/${thread.category}/${thread.subcategory}`)}
+          >
             {thread.subcategory}
           </span>
-          {" > "}
-          {thread.title}
         </div>
+
         <PremiumOfferBanner context="thread" />
 
-        {/* ── THREAD CARD ── */}
-        <div style={{ background: "#0a1520", border: "1px solid #1a2535", borderRadius: 10, marginBottom: 20, overflow: "hidden" }}>
-
-          {/* Title bar */}
-          <div style={{ padding: "18px 20px 0" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
-              {thread.pinned && (
-                <span style={{ fontSize: 11, fontWeight: 700, color: "#6c63ff", background: "rgba(108,99,255,0.15)", padding: "2px 8px", borderRadius: 4 }}>
-                  📌 PINNED
-                </span>
-              )}
-              {thread.locked && (
-                <span style={{ fontSize: 11, fontWeight: 700, color: "#ff9b6b", background: "rgba(255,155,107,0.1)", padding: "2px 8px", borderRadius: 4 }}>
-                  🔒 LOCKED
-                </span>
-              )}
-            </div>
-
-            {editingThread ? (
-              <input
-                value={editTitle}
-                onChange={e => setEditTitle(e.target.value)}
-                style={{
-                  width: "100%", background: "#050a0f", border: "1px solid #1a2535",
-                  borderRadius: 6, padding: "8px 12px", color: "#fff", fontSize: 20,
-                  fontWeight: 700, outline: "none", marginBottom: 12, boxSizing: "border-box",
-                }}
-              />
-            ) : (
-              <h1 style={{ margin: "0 0 12px", fontSize: 22 }}>{thread.title}</h1>
-            )}
+        {/* ── TITLE BLOCK ── */}
+        <div style={{ marginBottom: 14, marginTop: 14 }}>
+          <h1 style={{ margin: "0 0 4px", fontSize: 24, fontWeight: 800, color: "#fff" }}>
+            {thread.pinned && <span style={{ fontSize: 13, color: "#f0a500", marginRight: 8 }}>📌</span>}
+            {thread.locked && <span style={{ fontSize: 13, color: "#ef4444", marginRight: 8 }}>🔒</span>}
+            {thread.title}
+          </h1>
+          <div style={{ fontSize: 12.5, color: "#4a7a94" }}>
+            Submitted by{" "}
+            <span
+              style={{ color: "#6cc6ff", fontWeight: 700, cursor: thread.username ? "pointer" : "default" }}
+              onClick={() => thread.username && router.push(`/profile/${thread.username}`)}
+            >
+              {thread.username || "Unknown"}
+            </span>{" "}
+            at {formatFullDate(thread.created_at)}
           </div>
+        </div>
 
-          <div style={{ display: "flex", gap: 16, padding: "0 20px 18px", flexWrap: "wrap" }}>
-            {/* Author sidebar */}
-            <div style={{ width: 130, flexShrink: 0, textAlign: "center" }}>
-              <div
-                onClick={() => thread.username && router.push(`/profile/${thread.username}`)}
-                style={{
-                  width: 70, height: 70, borderRadius: 12, margin: "0 auto 8px",
-                  border: `2px solid ${threadBadge.color}`, overflow: "hidden",
-                  background: "#1a2535", display: "flex", alignItems: "center",
-                  justifyContent: "center", fontSize: 24, fontWeight: 700,
-                  color: threadBadge.color, cursor: thread.username ? "pointer" : "default",
-                }}
-              >
-                {thread.avatar_url
-                  ? <img src={thread.avatar_url} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                  : (thread.username || "?").slice(0, 2).toUpperCase()
-                }
-              </div>
-              <div
-                onClick={() => thread.username && router.push(`/profile/${thread.username}`)}
-                style={{ fontSize: 13, fontWeight: 700, color: "#e7e7e7", cursor: thread.username ? "pointer" : "default" }}
-              >
-                {thread.username || "Unknown"}
-              </div>
-              <div style={{
-                fontSize: 10.5, fontWeight: 700, color: threadBadge.color,
-                marginTop: 4, display: "inline-block", background: `${threadBadge.color}1a`,
-                border: `1px solid ${threadBadge.color}44`, borderRadius: 4, padding: "2px 8px",
-              }}>
-                {threadBadge.icon} {threadBadge.label}
-              </div>
+        {/* Toolbar: pagination + views/share/reply */}
+        <div style={{
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          flexWrap: "wrap", gap: 10, marginBottom: 14,
+        }}>
+          <PaginationBar page={safePage} totalPages={totalPages} onChange={setPage} />
+
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{
+              fontSize: 12, fontWeight: 700, color: "#c8dde8", background: "#0d2030",
+              border: "1px solid #1a3042", padding: "6px 12px", borderRadius: 6,
+              display: "flex", alignItems: "center", gap: 5,
+            }}>
+              👁️ {thread.views_count} Views
+            </span>
+            <button
+              onClick={handleShare}
+              title="Copy link to this thread"
+              style={{
+                fontSize: 12, fontWeight: 700, color: "#c8dde8", background: "#0d2030",
+                border: "1px solid #1a3042", padding: "6px 12px", borderRadius: 6, cursor: "pointer",
+              }}
+            >
+              {shareCopied ? "✅ Copied" : "🔗 Share"}
+            </button>
+            <button
+              onClick={() => document.getElementById("reply-box")?.scrollIntoView({ behavior: "smooth" })}
+              style={{
+                fontSize: 12, fontWeight: 700, color: "#fff", background: "#6c63ff",
+                border: "none", padding: "6px 14px", borderRadius: 6, cursor: "pointer",
+              }}
+            >
+              ↩ New Reply
+            </button>
+          </div>
+        </div>
+
+        {/* ── OP POST CARD ── */}
+        {showOP && (
+          <div style={{ background: "#0a1520", border: "1px solid #1a2535", borderRadius: 10, marginBottom: 14, overflow: "hidden" }}>
+            <div style={{ background: "#6c63ff", padding: "9px 18px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span style={{ fontSize: 14, fontWeight: 800, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {thread.title}
+              </span>
+              <span style={{ fontSize: 11.5, fontWeight: 700, color: "rgba(255,255,255,0.85)" }}>#{opPostNumber}</span>
             </div>
 
-            {/* Content */}
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ color: "#4a7a94", fontSize: 12.5, marginBottom: 12 }}>
-                {new Date(thread.created_at).toLocaleString()} · 👁️ {thread.views_count} views
+            <div style={{ display: "flex", gap: 16, padding: "18px 20px", flexWrap: "wrap" }}>
+              <PostAuthorSidebar
+                username={thread.username}
+                avatarUrl={thread.avatar_url}
+                role={thread.role}
+                online={threadOnline}
+                rep={thread.author_rep || 0}
+                likesGiven={thread.author_likes_given || 0}
+                postsCount={thread.author_posts_count || 0}
+                threadsCount={thread.author_threads_count || 0}
+                onClick={() => thread.username && router.push(`/profile/${thread.username}`)}
+              />
+
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12, color: "#4a7a94", marginBottom: 12 }}>
+                  Posted at {formatFullDate(thread.created_at)}
+                </div>
+
+                {editingThread ? (
+                  <>
+                    <ThreadEditToolbar exec={execEditCmd} />
+                    <div
+                      ref={editContentRef}
+                      contentEditable
+                      suppressContentEditableWarning
+                      style={{
+                        minHeight: 150, background: "#050a0f", border: "1px solid #1a2535",
+                        borderTop: "none", borderRadius: "0 0 6px 6px", padding: "12px 14px",
+                        color: "#c8dde8", fontSize: 14, lineHeight: 1.7, outline: "none",
+                      }}
+                    />
+                    <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                      <button onClick={saveEditThread} style={btnPrimary}>Save Changes</button>
+                      <button onClick={() => setEditingThread(false)} style={btnSecondary}>Cancel</button>
+                    </div>
+                  </>
+                ) : (
+                  <div
+                    className="rte-content"
+                    style={{ lineHeight: 1.8, fontSize: 14.5 }}
+                    dangerouslySetInnerHTML={{ __html: resolvedContent || thread.content }}
+                  />
+                )}
+
+                {!editingThread && thread.signature && (
+                  <div style={{
+                    marginTop: 18, paddingTop: 12, borderTop: "1px dashed #1a2535",
+                    fontSize: 12.5, color: "#6a8a9a", fontStyle: "italic", whiteSpace: "pre-wrap",
+                  }}>
+                    {thread.signature}
+                  </div>
+                )}
+
+                {/* Actions */}
+                {!editingThread && (
+                  <div style={{ display: "flex", gap: 8, marginTop: 16, alignItems: "center", justifyContent: "flex-end" }}>
+                    {canManageThread() && (
+                      <>
+                        <button onClick={startEditThread} style={btnGhost}>✏️ Edit</button>
+                        <button onClick={deleteThread} style={{ ...btnGhost, color: "#ef4444", borderColor: "#ef444444" }}>
+                          🗑️ Delete
+                        </button>
+                      </>
+                    )}
+                    <button
+                      onClick={toggleThreadLike}
+                      disabled={!currentUserId}
+                      title={threadLikedByMe ? "Unlike" : "Like"}
+                      style={{
+                        width: 36, height: 36, borderRadius: "50%",
+                        background: threadLikedByMe ? "rgba(34,197,94,0.18)" : "transparent",
+                        border: `1.5px solid ${threadLikedByMe ? "#22c55e" : "#2a3545"}`,
+                        color: threadLikedByMe ? "#22c55e" : "#9ab0bf",
+                        fontSize: 15, cursor: currentUserId ? "pointer" : "default",
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                      }}
+                    >
+                      👍
+                    </button>
+                    <span style={{ fontSize: 12.5, color: "#9ab0bf", fontWeight: 600 }}>{thread.likes_count}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── REPLY POST CARDS ── */}
+        {visibleReplies.map((reply, idx) => {
+          const isLiked = likedReplies.has(reply.id);
+          const isEditing = editingReplyId === reply.id;
+          const replyOnline = isOnline(reply.author_last_seen);
+          const postNumber = firstReplyNumber + idx;
+
+          return (
+            <div key={reply.id} style={{
+              background: "#0a1520", border: "1px solid #1a2535", borderRadius: 10,
+              marginBottom: 14, overflow: "hidden",
+            }}>
+              <div style={{ background: "#122236", padding: "8px 18px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <span style={{ fontSize: 12.5, fontWeight: 700, color: "#c8dde8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  Re: {thread.title}
+                </span>
+                <span style={{ fontSize: 11, color: "#6a8a9a" }}>
+                  #{postNumber} · {timeAgo(reply.created_at)}
+                  {reply.edited_at && <span style={{ fontStyle: "italic" }}> · edited</span>}
+                </span>
               </div>
 
-              {editingThread ? (
-                <>
-                  <ThreadEditToolbar exec={execEditCmd} />
-                  <div
-                    ref={editContentRef}
-                    contentEditable
-                    suppressContentEditableWarning
-                    style={{
-                      minHeight: 150, background: "#050a0f", border: "1px solid #1a2535",
-                      borderTop: "none", borderRadius: "0 0 6px 6px", padding: "12px 14px",
-                      color: "#c8dde8", fontSize: 14, lineHeight: 1.7, outline: "none",
-                    }}
-                  />
-                  <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-                    <button onClick={saveEditThread} style={btnPrimary}>Save Changes</button>
-                    <button onClick={() => setEditingThread(false)} style={btnSecondary}>Cancel</button>
-                  </div>
-                </>
-              ) : (
-                <div
-                  className="rte-content"
-                  style={{ lineHeight: 1.8, fontSize: 14.5 }}
-                  dangerouslySetInnerHTML={{ __html: resolvedContent || thread.content }}
+              <div style={{ padding: 16, display: "flex", gap: 14, flexWrap: "wrap" }}>
+                <PostAuthorSidebar
+                  username={reply.username}
+                  avatarUrl={reply.avatar_url}
+                  role={reply.role}
+                  online={replyOnline}
+                  rep={reply.author_rep || 0}
+                  likesGiven={reply.author_likes_given || 0}
+                  postsCount={reply.author_posts_count || 0}
+                  threadsCount={reply.author_threads_count || 0}
+                  onClick={() => reply.username && router.push(`/profile/${reply.username}`)}
                 />
-              )}
 
-              {!editingThread && thread.signature && (
-                <div style={{
-                  marginTop: 18, paddingTop: 12, borderTop: "1px dashed #1a2535",
-                  fontSize: 12.5, color: "#6a8a9a", fontStyle: "italic", whiteSpace: "pre-wrap",
-                }}>
-                  {thread.signature}
-                </div>
-              )}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12, color: "#4a7a94", marginBottom: 10 }}>
+                    Posted at {formatFullDate(reply.created_at)}
+                  </div>
 
-              {/* Actions */}
-              {!editingThread && (
-                <div style={{ display: "flex", gap: 8, marginTop: 16, alignItems: "center" }}>
-                  <button
-                    onClick={toggleThreadLike}
-                    disabled={!currentUserId}
-                    style={{
-                      background: threadLikedByMe ? "rgba(231,76,140,0.15)" : "transparent",
-                      border: `1px solid ${threadLikedByMe ? "#e74c8c" : "#1a2535"}`,
-                      borderRadius: 6, padding: "6px 14px", color: threadLikedByMe ? "#e74c8c" : "#9ab0bf",
-                      fontSize: 12.5, fontWeight: 600, cursor: currentUserId ? "pointer" : "default",
-                      display: "flex", alignItems: "center", gap: 6,
-                    }}
-                  >
-                    {threadLikedByMe ? "❤️" : "🤍"} {thread.likes_count}
-                  </button>
-
-                  {canManageThread() && (
+                  {isEditing ? (
                     <>
-                      <button onClick={startEditThread} style={btnGhost}>✏️ Edit</button>
-                      <button onClick={deleteThread} style={{ ...btnGhost, color: "#ef4444", borderColor: "#ef444444" }}>
-                        🗑️ Delete
-                      </button>
+                      <textarea
+                        value={editReplyText}
+                        onChange={e => setEditReplyText(e.target.value)}
+                        style={{
+                          width: "100%", minHeight: 90, background: "#050a0f",
+                          border: "1px solid #1a2535", borderRadius: 6, color: "#fff",
+                          padding: 10, fontSize: 13.5, outline: "none", resize: "vertical",
+                          boxSizing: "border-box", marginBottom: 8,
+                        }}
+                      />
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button onClick={() => saveEditReply(reply.id)} style={btnPrimary}>Save</button>
+                        <button onClick={() => setEditingReplyId(null)} style={btnSecondary}>Cancel</button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      {reply.content && (
+                        <div className="rte-content" style={{ color: "#c8dde8", lineHeight: 1.7, fontSize: 14 }}
+                          dangerouslySetInnerHTML={{ __html: reply.content }} />
+                      )}
+                      {reply.image_url && (
+                        <img src={reply.image_url} alt="Reply attachment" style={{ maxWidth: "100%", maxHeight: 400, borderRadius: 8, marginTop: reply.content ? 12 : 0, display: "block" }} />
+                      )}
+                      {reply.video_url && (
+                        <video src={reply.video_url} controls style={{ maxWidth: "100%", maxHeight: 400, borderRadius: 8, marginTop: 12, display: "block" }} />
+                      )}
+
+                      <div style={{ display: "flex", gap: 8, marginTop: 14, alignItems: "center", justifyContent: "flex-end" }}>
+                        {canManageReply(reply) && (
+                          <>
+                            <button onClick={() => startEditReply(reply)} style={{ ...btnGhost, padding: "5px 12px", fontSize: 11.5 }}>✏️ Edit</button>
+                            <button onClick={() => deleteReply(reply.id)} style={{ ...btnGhost, padding: "5px 12px", fontSize: 11.5, color: "#ef4444", borderColor: "#ef444444" }}>🗑️ Delete</button>
+                          </>
+                        )}
+                        <button
+                          onClick={() => toggleReplyLike(reply.id)}
+                          disabled={!currentUserId}
+                          title={isLiked ? "Unlike" : "Like"}
+                          style={{
+                            width: 30, height: 30, borderRadius: "50%",
+                            background: isLiked ? "rgba(34,197,94,0.18)" : "transparent",
+                            border: `1.5px solid ${isLiked ? "#22c55e" : "#2a3545"}`,
+                            color: isLiked ? "#22c55e" : "#9ab0bf",
+                            fontSize: 13, cursor: currentUserId ? "pointer" : "default",
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                          }}
+                        >
+                          👍
+                        </button>
+                        <span style={{ fontSize: 11.5, color: "#9ab0bf", fontWeight: 600 }}>{reply.likes_count}</span>
+                      </div>
                     </>
                   )}
                 </div>
-              )}
+              </div>
             </div>
-          </div>
-        </div>
+          );
+        })}
 
-        {/* ── REPLIES ── */}
+        {/* Bottom pagination (mirrors top, handy after a long thread) */}
+        {totalPages > 1 && (
+          <div style={{ display: "flex", justifyContent: "center", marginBottom: 20 }}>
+            <PaginationBar page={safePage} totalPages={totalPages} onChange={setPage} />
+          </div>
+        )}
+
+        {/* ── REPLY COMPOSER ── */}
         <div id="reply-box" style={{ background: "#0a1520", border: "1px solid #1a2535", borderRadius: 10, padding: 20 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 20 }}>
             <h2 style={{ margin: 0, fontSize: 18 }}>
@@ -639,9 +971,8 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
             {currentUserId && <DailyLimitBadge />}
           </div>
 
-          {/* Reply composer */}
           {currentUserId ? (
-            <div style={{ marginBottom: 24 }}>
+            <div>
               <div style={{ position: "relative" }}>
                 <textarea
                   value={replyText}
@@ -700,119 +1031,10 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
           ) : (
             <div style={{
               background: "#050a0f", border: "1px solid #1a2535", borderRadius: 8,
-              padding: "16px", textAlign: "center", marginBottom: 24, fontSize: 13, color: "#4a7a94",
+              padding: "16px", textAlign: "center", fontSize: 13, color: "#4a7a94",
             }}>
               <a href="/login" style={{ color: "#00b4d8", textDecoration: "none", fontWeight: 600 }}>Login</a> to post a reply
             </div>
-          )}
-
-          {/* Replies list */}
-          {replies.length === 0 ? (
-            <div style={{ color: "#4a7a94", textAlign: "center", padding: "40px 0", border: "1px dashed #1a2535", borderRadius: 8 }}>
-              No replies yet.
-            </div>
-          ) : (
-            replies.map((reply) => {
-              const replyBadge = ROLE_BADGES[reply.role || "member"] || ROLE_BADGES.member;
-              const isLiked = likedReplies.has(reply.id);
-              const isEditing = editingReplyId === reply.id;
-
-              return (
-                <div key={reply.id} style={{
-                  background: "#050a0f", border: "1px solid #1a2535", borderRadius: 8,
-                  padding: 16, marginBottom: 12, display: "flex", gap: 14,
-                }}>
-                  {/* Author */}
-                  <div style={{ width: 80, flexShrink: 0, textAlign: "center" }}>
-                    <div
-                      onClick={() => reply.username && router.push(`/profile/${reply.username}`)}
-                      style={{
-                        width: 48, height: 48, borderRadius: 10, margin: "0 auto 6px",
-                        border: `2px solid ${replyBadge.color}`, overflow: "hidden",
-                        background: "#1a2535", display: "flex", alignItems: "center",
-                        justifyContent: "center", fontSize: 16, fontWeight: 700,
-                        color: replyBadge.color, cursor: reply.username ? "pointer" : "default",
-                      }}
-                    >
-                      {reply.avatar_url
-                        ? <img src={reply.avatar_url} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                        : (reply.username || "?").slice(0, 2).toUpperCase()
-                      }
-                    </div>
-                    <div style={{ fontSize: 11.5, fontWeight: 700, color: "#e7e7e7", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {reply.username || "Unknown"}
-                    </div>
-                    <div style={{ fontSize: 9, fontWeight: 700, color: replyBadge.color, marginTop: 3 }}>
-                      {replyBadge.icon} {replyBadge.label}
-                    </div>
-                  </div>
-
-                  {/* Content */}
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, flexWrap: "wrap", gap: 6 }}>
-                      <span style={{ fontSize: 11.5, color: "#4a7a94" }}>
-                        {timeAgo(reply.created_at)}
-                        {reply.edited_at && <span style={{ fontStyle: "italic" }}> · edited</span>}
-                      </span>
-                    </div>
-
-                    {isEditing ? (
-                      <>
-                        <textarea
-                          value={editReplyText}
-                          onChange={e => setEditReplyText(e.target.value)}
-                          style={{
-                            width: "100%", minHeight: 90, background: "#0a1520",
-                            border: "1px solid #1a2535", borderRadius: 6, color: "#fff",
-                            padding: 10, fontSize: 13.5, outline: "none", resize: "vertical",
-                            boxSizing: "border-box", marginBottom: 8,
-                          }}
-                        />
-                        <div style={{ display: "flex", gap: 8 }}>
-                          <button onClick={() => saveEditReply(reply.id)} style={btnPrimary}>Save</button>
-                          <button onClick={() => setEditingReplyId(null)} style={btnSecondary}>Cancel</button>
-                        </div>
-                      </>
-                    ) : (
-                      <>
-                        {reply.content && (
-                          <div className="rte-content" style={{ color: "#c8dde8", lineHeight: 1.7, fontSize: 14 }}
-                            dangerouslySetInnerHTML={{ __html: reply.content }} />
-                        )}
-                        {reply.image_url && (
-                          <img src={reply.image_url} alt="Reply attachment" style={{ maxWidth: "100%", maxHeight: 400, borderRadius: 8, marginTop: reply.content ? 12 : 0, display: "block" }} />
-                        )}
-                        {reply.video_url && (
-                          <video src={reply.video_url} controls style={{ maxWidth: "100%", maxHeight: 400, borderRadius: 8, marginTop: 12, display: "block" }} />
-                        )}
-
-                        <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-                          <button
-                            onClick={() => toggleReplyLike(reply.id)}
-                            disabled={!currentUserId}
-                            style={{
-                              background: isLiked ? "rgba(231,76,140,0.15)" : "transparent",
-                              border: `1px solid ${isLiked ? "#e74c8c" : "#1a2535"}`,
-                              borderRadius: 6, padding: "4px 10px", color: isLiked ? "#e74c8c" : "#9ab0bf",
-                              fontSize: 11.5, fontWeight: 600, cursor: currentUserId ? "pointer" : "default",
-                            }}
-                          >
-                            {isLiked ? "❤️" : "🤍"} {reply.likes_count}
-                          </button>
-
-                          {canManageReply(reply) && (
-                            <>
-                              <button onClick={() => startEditReply(reply)} style={{ ...btnGhost, padding: "4px 10px", fontSize: 11.5 }}>✏️ Edit</button>
-                              <button onClick={() => deleteReply(reply.id)} style={{ ...btnGhost, padding: "4px 10px", fontSize: 11.5, color: "#ef4444", borderColor: "#ef444444" }}>🗑️ Delete</button>
-                            </>
-                          )}
-                        </div>
-                      </>
-                    )}
-                  </div>
-                </div>
-              );
-            })
           )}
         </div>
       </div>
@@ -848,7 +1070,6 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
         }
       `}</style>
 
-      
     </div>
   );
 }
@@ -911,4 +1132,3 @@ const removeBtnStyle: React.CSSProperties = {
   border: "1px solid #2a3a4f", color: "#fff", borderRadius: "50%",
   width: 22, height: 22, cursor: "pointer", fontSize: 12, lineHeight: 1,
 };
-

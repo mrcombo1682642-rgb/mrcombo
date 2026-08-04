@@ -112,7 +112,7 @@ export default function CreateThreadModal({
     const url = prompt("Hidden link ka URL daalo (Premium users turant dekhenge, Free users comment karne ke baad):");
     if (!url || !url.trim()) return;
 
-    const label = prompt("Link ka text/label (khaali chhodo to seedha URL dikhega):", "") || url.trim();
+    const label = prompt("Link text/label (leave empty to show the raw URL):", "") || url.trim();
 
     const wrappedHTML =
       `<div class="hlb-pending" contenteditable="false" style="border:1px dashed #f0a500;border-radius:6px;padding:8px 10px;margin:6px 0;background:rgba(240,165,0,0.08);">` +
@@ -420,7 +420,7 @@ export default function CreateThreadModal({
           />
 
           <div style={{ fontSize: 11, color: "#4a7a94", marginTop: 6 }}>
-            💡 Tip: 🔒 button dabao aur link daalo — wo Premium users ko turant dikhega, aur Free users ko sirf tab jab woh is thread par comment kar dein.
+            "Tip: Click the 🔒 button and add a link — Premium users will see it instantly, while Free users will only see it after they comment on this thread."
           </div>
 
           <style>{`
