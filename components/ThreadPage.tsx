@@ -29,6 +29,7 @@ interface ThreadDetail {
   signature: string | null;
   join_date: string | null;
   likes_count: number;
+  dislikes_count: number;
   author_rep: number;
   author_likes_given: number;
   author_posts_count: number;
@@ -50,6 +51,7 @@ interface Reply {
   role: string | null;
   badge: string | null;
   likes_count: number;
+  dislikes_count: number;
   author_rep: number;
   author_likes_given: number;
   author_posts_count: number;
@@ -283,7 +285,9 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [currentUserRole, setCurrentUserRole] = useState<string | null>(null);
   const [threadLikedByMe, setThreadLikedByMe] = useState(false);
+  const [threadDislikedByMe, setThreadDislikedByMe] = useState(false);
   const [likedReplies, setLikedReplies] = useState<Set<string>>(new Set());
+  const [dislikedReplies, setDislikedReplies] = useState<Set<string>>(new Set());
   const [shareCopied, setShareCopied] = useState(false);
 
   // Attachment state
@@ -352,9 +356,17 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
         .from("thread_likes").select("id").eq("thread_id", threadId).eq("user_id", uid).single();
       setThreadLikedByMe(!!likeData);
 
+      const { data: dislikeData } = await supabase
+        .from("thread_dislikes").select("id").eq("thread_id", threadId).eq("user_id", uid).single();
+      setThreadDislikedByMe(!!dislikeData);
+
       const { data: replyLikes } = await supabase
         .from("reply_likes").select("reply_id").eq("user_id", uid);
       if (replyLikes) setLikedReplies(new Set(replyLikes.map(r => r.reply_id)));
+
+      const { data: replyDislikes } = await supabase
+        .from("reply_dislikes").select("reply_id").eq("user_id", uid);
+      if (replyDislikes) setDislikedReplies(new Set(replyDislikes.map(r => r.reply_id)));
     } catch (error) {
       console.error("Error loading current user:", error);
       setCurrentUserId(null);
@@ -521,8 +533,7 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
       clearVideo();
       setShowEmojiPicker(false);
       await loadThread();
-      // jump to the last page so the user sees their new reply
-      setPage(p => p); // page recalculated below once replies state updates
+      setPage(p => p);
     } finally {
       setPosting(false);
     }
@@ -538,9 +549,37 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
       setThreadLikedByMe(false);
       setThread(prev => prev ? { ...prev, likes_count: Math.max(0, prev.likes_count - 1) } : prev);
     } else {
+      if (threadDislikedByMe) {
+        await supabase.from("thread_dislikes").delete()
+          .eq("thread_id", thread.id).eq("user_id", currentUserId);
+        setThreadDislikedByMe(false);
+        setThread(prev => prev ? { ...prev, dislikes_count: Math.max(0, prev.dislikes_count - 1) } : prev);
+      }
       await supabase.from("thread_likes").insert({ thread_id: thread.id, user_id: currentUserId });
       setThreadLikedByMe(true);
       setThread(prev => prev ? { ...prev, likes_count: prev.likes_count + 1 } : prev);
+    }
+  }
+
+  // ── Thread Dislike ──
+  async function toggleThreadDislike() {
+    if (!currentUserId || !thread) return;
+
+    if (threadDislikedByMe) {
+      await supabase.from("thread_dislikes").delete()
+        .eq("thread_id", thread.id).eq("user_id", currentUserId);
+      setThreadDislikedByMe(false);
+      setThread(prev => prev ? { ...prev, dislikes_count: Math.max(0, prev.dislikes_count - 1) } : prev);
+    } else {
+      if (threadLikedByMe) {
+        await supabase.from("thread_likes").delete()
+          .eq("thread_id", thread.id).eq("user_id", currentUserId);
+        setThreadLikedByMe(false);
+        setThread(prev => prev ? { ...prev, likes_count: Math.max(0, prev.likes_count - 1) } : prev);
+      }
+      await supabase.from("thread_dislikes").insert({ thread_id: thread.id, user_id: currentUserId });
+      setThreadDislikedByMe(true);
+      setThread(prev => prev ? { ...prev, dislikes_count: prev.dislikes_count + 1 } : prev);
     }
   }
 
@@ -548,16 +587,66 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
   async function toggleReplyLike(replyId: string) {
     if (!currentUserId) return;
     const isLiked = likedReplies.has(replyId);
+    const isDisliked = dislikedReplies.has(replyId);
 
     if (isLiked) {
       await supabase.from("reply_likes").delete().eq("reply_id", replyId).eq("user_id", currentUserId);
       setLikedReplies(prev => { const s = new Set(prev); s.delete(replyId); return s; });
       setReplies(prev => prev.map(r => r.id === replyId ? { ...r, likes_count: Math.max(0, r.likes_count - 1) } : r));
     } else {
+      if (isDisliked) {
+        await supabase.from("reply_dislikes").delete().eq("reply_id", replyId).eq("user_id", currentUserId);
+        setDislikedReplies(prev => { const s = new Set(prev); s.delete(replyId); return s; });
+        setReplies(prev => prev.map(r => r.id === replyId ? { ...r, dislikes_count: Math.max(0, r.dislikes_count - 1) } : r));
+      }
       await supabase.from("reply_likes").insert({ reply_id: replyId, user_id: currentUserId });
       setLikedReplies(prev => new Set(prev).add(replyId));
       setReplies(prev => prev.map(r => r.id === replyId ? { ...r, likes_count: r.likes_count + 1 } : r));
     }
+  }
+
+  // ── Reply Dislike ──
+  async function toggleReplyDislike(replyId: string) {
+    if (!currentUserId) return;
+    const isDisliked = dislikedReplies.has(replyId);
+    const isLiked = likedReplies.has(replyId);
+
+    if (isDisliked) {
+      await supabase.from("reply_dislikes").delete().eq("reply_id", replyId).eq("user_id", currentUserId);
+      setDislikedReplies(prev => { const s = new Set(prev); s.delete(replyId); return s; });
+      setReplies(prev => prev.map(r => r.id === replyId ? { ...r, dislikes_count: Math.max(0, r.dislikes_count - 1) } : r));
+    } else {
+      if (isLiked) {
+        await supabase.from("reply_likes").delete().eq("reply_id", replyId).eq("user_id", currentUserId);
+        setLikedReplies(prev => { const s = new Set(prev); s.delete(replyId); return s; });
+        setReplies(prev => prev.map(r => r.id === replyId ? { ...r, likes_count: Math.max(0, r.likes_count - 1) } : r));
+      }
+      await supabase.from("reply_dislikes").insert({ reply_id: replyId, user_id: currentUserId });
+      setDislikedReplies(prev => new Set(prev).add(replyId));
+      setReplies(prev => prev.map(r => r.id === replyId ? { ...r, dislikes_count: r.dislikes_count + 1 } : r));
+    }
+  }
+
+  // ── Report (thread or reply) ──
+  async function handleReport(targetType: "thread" | "reply", targetId: string) {
+    if (!currentUserId) {
+      setErrorMsg("You must be logged in to report content.");
+      return;
+    }
+    const reason = window.prompt("Why are you reporting this? Please briefly describe the issue:");
+    if (!reason || !reason.trim()) return;
+
+    const { error } = await supabase.rpc("submit_report", {
+      target_type_input: targetType,
+      target_id_input: targetId,
+      reason_input: reason.trim(),
+    });
+
+    if (error) {
+      alert("Could not submit report: " + error.message);
+      return;
+    }
+    alert("Report submitted. Our team will review it. Thank you!");
   }
 
   // ── Share (copy link) ──
@@ -666,7 +755,6 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
   const canPost = (replyText.trim().length > 0 || imageFile || videoFile) && !posting;
   const threadOnline = isOnline(thread.author_last_seen);
 
-  // ── Pagination math: OP always occupies slot #1 on page 1 ──
   const totalPostsCount = 1 + replies.length;
   const totalPages = Math.max(1, Math.ceil(totalPostsCount / POSTS_PER_PAGE));
   const safePage = Math.min(page, totalPages);
@@ -682,7 +770,6 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
 
       <div style={{ maxWidth: 900, margin: "0 auto", padding: "80px 16px" }}>
 
-        {/* Breadcrumb */}
         <div style={{ fontSize: 13, color: "#4a7a94", marginBottom: 10 }}>
           <span style={{ cursor: "pointer" }} onClick={() => router.push("/")}>Home</span>
           {" > "}
@@ -700,7 +787,6 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
 
         <PremiumOfferBanner context="thread" />
 
-        {/* ── TITLE BLOCK ── */}
         <div style={{ marginBottom: 14, marginTop: 14 }}>
           <h1 style={{ margin: "0 0 4px", fontSize: 24, fontWeight: 800, color: "#fff" }}>
             {thread.pinned && <span style={{ fontSize: 13, color: "#f0a500", marginRight: 8 }}>📌</span>}
@@ -719,7 +805,6 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
           </div>
         </div>
 
-        {/* Toolbar: pagination + views/share/reply */}
         <div style={{
           display: "flex", alignItems: "center", justifyContent: "space-between",
           flexWrap: "wrap", gap: 10, marginBottom: 14,
@@ -756,7 +841,6 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
           </div>
         </div>
 
-        {/* ── OP POST CARD ── */}
         {showOP && (
           <div style={{ background: "#0a1520", border: "1px solid #1a2535", borderRadius: 10, marginBottom: 14, overflow: "hidden" }}>
             <div style={{ background: "#6c63ff", padding: "9px 18px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -819,7 +903,6 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
                   </div>
                 )}
 
-                {/* Actions */}
                 {!editingThread && (
                   <div style={{ display: "flex", gap: 8, marginTop: 16, alignItems: "center", justifyContent: "flex-end" }}>
                     {canManageThread() && (
@@ -829,6 +912,15 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
                           🗑️ Delete
                         </button>
                       </>
+                    )}
+                    {currentUserId && currentUserId !== thread.user_id && (
+                      <button
+                        onClick={() => handleReport("thread", thread.id)}
+                        title="Report this thread"
+                        style={btnGhost}
+                      >
+                        🚩 Report
+                      </button>
                     )}
                     <button
                       onClick={toggleThreadLike}
@@ -845,7 +937,23 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
                     >
                       👍
                     </button>
-                    <span style={{ fontSize: 12.5, color: "#9ab0bf", fontWeight: 600 }}>{thread.likes_count}</span>
+                    <span style={{ fontSize: 12.5, color: "#22c55e", fontWeight: 600, minWidth: 14 }}>{thread.likes_count}</span>
+                    <button
+                      onClick={toggleThreadDislike}
+                      disabled={!currentUserId}
+                      title={threadDislikedByMe ? "Remove dislike" : "Dislike"}
+                      style={{
+                        width: 36, height: 36, borderRadius: "50%",
+                        background: threadDislikedByMe ? "rgba(239,68,68,0.18)" : "transparent",
+                        border: `1.5px solid ${threadDislikedByMe ? "#ef4444" : "#2a3545"}`,
+                        color: threadDislikedByMe ? "#ef4444" : "#9ab0bf",
+                        fontSize: 15, cursor: currentUserId ? "pointer" : "default",
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                      }}
+                    >
+                      👎
+                    </button>
+                    <span style={{ fontSize: 12.5, color: "#ef4444", fontWeight: 600, minWidth: 14 }}>{thread.dislikes_count}</span>
                   </div>
                 )}
               </div>
@@ -853,9 +961,9 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
           </div>
         )}
 
-        {/* ── REPLY POST CARDS ── */}
         {visibleReplies.map((reply, idx) => {
           const isLiked = likedReplies.has(reply.id);
+          const isDisliked = dislikedReplies.has(reply.id);
           const isEditing = editingReplyId === reply.id;
           const replyOnline = isOnline(reply.author_last_seen);
           const postNumber = firstReplyNumber + idx;
@@ -930,6 +1038,15 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
                             <button onClick={() => deleteReply(reply.id)} style={{ ...btnGhost, padding: "5px 12px", fontSize: 11.5, color: "#ef4444", borderColor: "#ef444444" }}>🗑️ Delete</button>
                           </>
                         )}
+                        {currentUserId && currentUserId !== reply.user_id && (
+                          <button
+                            onClick={() => handleReport("reply", reply.id)}
+                            title="Report this reply"
+                            style={{ ...btnGhost, padding: "5px 12px", fontSize: 11.5 }}
+                          >
+                            🚩 Report
+                          </button>
+                        )}
                         <button
                           onClick={() => toggleReplyLike(reply.id)}
                           disabled={!currentUserId}
@@ -945,7 +1062,23 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
                         >
                           👍
                         </button>
-                        <span style={{ fontSize: 11.5, color: "#9ab0bf", fontWeight: 600 }}>{reply.likes_count}</span>
+                        <span style={{ fontSize: 11.5, color: "#22c55e", fontWeight: 600, minWidth: 12 }}>{reply.likes_count}</span>
+                        <button
+                          onClick={() => toggleReplyDislike(reply.id)}
+                          disabled={!currentUserId}
+                          title={isDisliked ? "Remove dislike" : "Dislike"}
+                          style={{
+                            width: 30, height: 30, borderRadius: "50%",
+                            background: isDisliked ? "rgba(239,68,68,0.18)" : "transparent",
+                            border: `1.5px solid ${isDisliked ? "#ef4444" : "#2a3545"}`,
+                            color: isDisliked ? "#ef4444" : "#9ab0bf",
+                            fontSize: 13, cursor: currentUserId ? "pointer" : "default",
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                          }}
+                        >
+                          👎
+                        </button>
+                        <span style={{ fontSize: 11.5, color: "#ef4444", fontWeight: 600, minWidth: 12 }}>{reply.dislikes_count}</span>
                       </div>
                     </>
                   )}
@@ -955,14 +1088,12 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
           );
         })}
 
-        {/* Bottom pagination (mirrors top, handy after a long thread) */}
         {totalPages > 1 && (
           <div style={{ display: "flex", justifyContent: "center", marginBottom: 20 }}>
             <PaginationBar page={safePage} totalPages={totalPages} onChange={setPage} />
           </div>
         )}
 
-        {/* ── REPLY COMPOSER ── */}
         <div id="reply-box" style={{ background: "#0a1520", border: "1px solid #1a2535", borderRadius: 10, padding: 20 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 20 }}>
             <h2 style={{ margin: 0, fontSize: 18 }}>
