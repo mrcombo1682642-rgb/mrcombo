@@ -843,7 +843,7 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
 
         {showOP && (
           <div style={{ background: "#0a1520", border: "1px solid #1a2535", borderRadius: 10, marginBottom: 14, overflow: "hidden" }}>
-            <div style={{ background: "#6c63ff", padding: "9px 18px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ background: "linear-gradient(90deg, #4c5fd6, #6c7ef0)", padding: "9px 18px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <span style={{ fontSize: 14, fontWeight: 800, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {thread.title}
               </span>

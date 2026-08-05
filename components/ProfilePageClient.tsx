@@ -67,7 +67,7 @@ type SettingsTab = "profile" | "username" | "music" | "account";
 
 export default function ProfilePageClient({ targetUsername }: { targetUsername: string }) {
   const [profile, setProfile] = useState<Profile | null>(null);
-  const [stats, setStats] = useState<ProfileStats | null>(null);
+  const [stats, setStats] = useState<ProfileStats & { vouches_count?: number } | null>(null);
   const [visitors, setVisitors] = useState<ProfileVisitor[]>([]);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
@@ -133,127 +133,131 @@ export default function ProfilePageClient({ targetUsername }: { targetUsername: 
     setLoading(true);
     setNotFound(false);
 
-    const { data: userData } = await supabase.auth.getUser();
-    const uid = userData.user?.id || null;
-    setCurrentUserId(uid);
+    try {
+      const { data: userData } = await supabase.auth.getUser();
+      const uid = userData.user?.id || null;
+      setCurrentUserId(uid);
 
-    const { data: profileData, error } = await supabase
-      .from("profiles").select("*").eq("username", targetUsername).single();
+      const { data: profileData, error } = await supabase
+        .from("profiles").select("*").eq("username", targetUsername).single();
 
-    if (error || !profileData) {
-      setNotFound(true);
-      setLoading(false);
-      return;
-    }
+      if (error || !profileData) {
+        setNotFound(true);
+        return;
+      }
 
-    setProfile(profileData as Profile);
-    setEditBio(profileData.bio || "");
-    setEditSignature(profileData.signature || "");
-    setEditDiscord(profileData.discord_id || "");
-    setEditTelegram(profileData.telegram_id || "");
-    setEditDob(profileData.date_of_birth || "");
+      setProfile(profileData as Profile);
+      setEditBio(profileData.bio || "");
+      setEditSignature(profileData.signature || "");
+      setEditDiscord(profileData.discord_id || "");
+      setEditTelegram(profileData.telegram_id || "");
+      setEditDob(profileData.date_of_birth || "");
 
-    const owner = uid === profileData.id;
-    setIsOwner(owner);
+      const owner = uid === profileData.id;
+      setIsOwner(owner);
 
-    if (profileData.last_seen) {
-      const diffMin = (Date.now() - new Date(profileData.last_seen).getTime()) / 60000;
-      setIsOnline(diffMin < 5);
-    }
+      if (profileData.last_seen) {
+        const diffMin = (Date.now() - new Date(profileData.last_seen).getTime()) / 60000;
+        setIsOnline(diffMin < 5);
+      }
 
-    // Track visit + check viewer role (for admin controls)
-    let visitorUsername = "Guest";
-    let viewerRole = "member";
-    if (uid) {
-      const { data: myProfile } = await supabase
-        .from("profiles").select("username, role").eq("id", uid).single();
-      visitorUsername = myProfile?.username || "Unknown";
-      viewerRole = myProfile?.role || "member";
-    }
-    const adminViewer = viewerRole === "admin";
-    setIsAdminViewer(adminViewer);
+      // Track visit + check viewer role (for admin controls)
+      let visitorUsername = "Guest";
+      let viewerRole = "member";
+      if (uid) {
+        const { data: myProfile } = await supabase
+          .from("profiles").select("username, role").eq("id", uid).single();
+        visitorUsername = myProfile?.username || "Unknown";
+        viewerRole = myProfile?.role || "member";
+      }
+      const adminViewer = viewerRole === "admin";
+      setIsAdminViewer(adminViewer);
 
-    supabase.rpc("track_profile_visit", {
-      target_user_id: profileData.id,
-      visitor_id_input: uid,
-      visitor_username_input: visitorUsername,
-    });
+      await supabase.rpc("track_profile_visit", {
+        target_user_id: profileData.id,
+        visitor_id_input: uid,
+        visitor_username_input: visitorUsername,
+      });
 
-    // Stats — now returns posts_count, threads_count, likes_count,
-    // reported_posts, and vouches_count (all live from real tables).
-    const { data: statsData } = await supabase.rpc("get_profile_stats", {
-      profile_user_id: profileData.id,
-    });
-    if (statsData && statsData[0]) setStats(statsData[0] as ProfileStats);
+      // Stats — now returns posts_count, threads_count, likes_count,
+      // reported_posts, and vouches_count (all live from real tables).
+      const { data: statsData } = await supabase.rpc("get_profile_stats", {
+        profile_user_id: profileData.id,
+      });
+      if (statsData && statsData[0]) setStats(statsData[0] as ProfileStats);
 
-    // Profile likes — how many people liked this profile, and did
-    // the current viewer already like it.
-    const { count: profileLikeCount } = await supabase
-      .from("profile_likes")
-      .select("id", { count: "exact", head: true })
-      .eq("profile_user_id", profileData.id);
-    setProfileLikesCount(profileLikeCount || 0);
-
-    if (uid && uid !== profileData.id) {
-      const { data: myLike } = await supabase
+      // Profile likes — how many people liked this profile, and did
+      // the current viewer already like it.
+      const { count: profileLikeCount } = await supabase
         .from("profile_likes")
-        .select("id")
+        .select("id", { count: "exact", head: true })
+        .eq("profile_user_id", profileData.id);
+      setProfileLikesCount(profileLikeCount || 0);
+
+      if (uid && uid !== profileData.id) {
+        const { data: myLike } = await supabase
+          .from("profile_likes")
+          .select("id")
+          .eq("profile_user_id", profileData.id)
+          .eq("user_id", uid)
+          .maybeSingle();
+        setProfileLikedByMe(!!myLike);
+      }
+
+      // Visitors
+      const { data: visitData } = await supabase
+        .from("profile_visits").select("visitor_username, visited_at")
         .eq("profile_user_id", profileData.id)
-        .eq("user_id", uid)
-        .maybeSingle();
-      setProfileLikedByMe(!!myLike);
+        .order("visited_at", { ascending: false }).limit(5);
+      if (visitData) setVisitors(visitData as ProfileVisitor[]);
+
+      // Awards — real earned awards, public RPC, works for any visitor
+      const { data: awardsData } = await supabase.rpc("get_user_awards", {
+        target_user_id: profileData.id,
+      });
+      if (awardsData) setUserAwards(awardsData as UserAward[]);
+
+      // Usergroups — real earned/assigned groups, public RPC
+      const { data: groupsData } = await supabase.rpc("get_user_groups", {
+        target_user_id: profileData.id,
+      });
+      setUserGroups((groupsData as UserGroup[]) || []);
+
+      // If admin is viewing, also load the full list of groups (to manage)
+      if (adminViewer) {
+        const { data: allGroupsData } = await supabase
+          .from("usergroups").select("*").order("sort_order");
+        setAllGroups((allGroupsData as Usergroup[]) || []);
+      }
+
+      // Music
+      const { data: musicData } = await supabase
+        .from("profile_music").select("*").eq("user_id", profileData.id).maybeSingle();
+      if (musicData) {
+        setMusic(musicData);
+        setMusicUrl(musicData.song_url || "");
+        setMusicTitle(musicData.song_title || "");
+        setMusicAutoplay(musicData.autoplay || false);
+      }
+
+      // Username requests (owner only)
+      if (owner && uid) {
+        const { data: requests } = await supabase
+          .from("username_change_requests").select("*")
+          .eq("user_id", uid).order("created_at", { ascending: false }).limit(5);
+        setUsernameRequests(requests || []);
+      }
+
+      // Update last_seen
+      if (uid && owner) {
+        await supabase.from("profiles").update({ last_seen: new Date().toISOString() }).eq("id", uid);
+      }
+    } catch (err) {
+      console.error("Profile init error:", err);
+      setNotFound(true);
+    } finally {
+      setLoading(false);
     }
-
-    // Visitors
-    const { data: visitData } = await supabase
-      .from("profile_visits").select("visitor_username, visited_at")
-      .eq("profile_user_id", profileData.id)
-      .order("visited_at", { ascending: false }).limit(5);
-    if (visitData) setVisitors(visitData as ProfileVisitor[]);
-
-    // Awards — real earned awards, public RPC, works for any visitor
-    const { data: awardsData } = await supabase.rpc("get_user_awards", {
-      target_user_id: profileData.id,
-    });
-    if (awardsData) setUserAwards(awardsData as UserAward[]);
-
-    // Usergroups — real earned/assigned groups, public RPC
-    const { data: groupsData } = await supabase.rpc("get_user_groups", {
-      target_user_id: profileData.id,
-    });
-    setUserGroups((groupsData as UserGroup[]) || []);
-
-    // If admin is viewing, also load the full list of groups (to manage)
-    if (adminViewer) {
-      const { data: allGroupsData } = await supabase
-        .from("usergroups").select("*").order("sort_order");
-      setAllGroups((allGroupsData as Usergroup[]) || []);
-    }
-
-    // Music
-    const { data: musicData } = await supabase
-      .from("profile_music").select("*").eq("user_id", profileData.id).single();
-    if (musicData) {
-      setMusic(musicData);
-      setMusicUrl(musicData.song_url || "");
-      setMusicTitle(musicData.song_title || "");
-      setMusicAutoplay(musicData.autoplay || false);
-    }
-
-    // Username requests (owner only)
-    if (owner && uid) {
-      const { data: requests } = await supabase
-        .from("username_change_requests").select("*")
-        .eq("user_id", uid).order("created_at", { ascending: false }).limit(5);
-      setUsernameRequests(requests || []);
-    }
-
-    // Update last_seen
-    if (uid && owner) {
-      supabase.from("profiles").update({ last_seen: new Date().toISOString() }).eq("id", uid);
-    }
-
-    setLoading(false);
   }
 
   async function reloadUserGroups() {
@@ -321,9 +325,10 @@ export default function ProfilePageClient({ targetUsername }: { targetUsername: 
     if (!currentUserId || !profile) return;
     setUsernameMsg("");
 
-    if (!SUBSCRIPTION_ROLES.includes(profile.role)) {
-      setUsernameMsg("❌ Username change requires a subscription (VIP, VIP+, or Lifetime).");
-      return;
+    const normalizedRole = (profile.role || "").toLowerCase().trim();
+     if (!SUBSCRIPTION_ROLES.includes(normalizedRole) && normalizedRole !== "admin" && normalizedRole !== "moderator") {
+        setUsernameMsg("❌ Username change requires a subscription (VIP, VIP+, or Lifetime).");
+        return;
     }
     if (!newUsername.trim() || newUsername.trim().length < 3) {
       setUsernameMsg("❌ Username must be at least 3 characters.");
@@ -458,8 +463,9 @@ export default function ProfilePageClient({ targetUsername }: { targetUsername: 
     </div>
   );
 
-  const badge = ROLE_BADGES[profile.role] || ROLE_BADGES.member;
-  const isSubscriber = SUBSCRIPTION_ROLES.includes(profile.role);
+  const normalizedRole = (profile.role || "").toLowerCase().trim();
+const badge = ROLE_BADGES[normalizedRole] || ROLE_BADGES.member;
+const isSubscriber = SUBSCRIPTION_ROLES.includes(normalizedRole) || normalizedRole === "admin" || normalizedRole === "moderator";
 
   return (
     <div style={{ minHeight: "100vh", background: "#050a0f", color: "#c8dde8", fontFamily: "Inter, sans-serif" }}>

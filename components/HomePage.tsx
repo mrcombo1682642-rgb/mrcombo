@@ -465,7 +465,7 @@ export default function HomePage() {
     setBannedUsers(data || []);
   }
 
-  // Open DM
+  // Open DM (still used from the Top Chatters modal)
   async function openDm(username: string) {
     if (!user) { router.push("/login"); return; }
     setDmUser({ username });
@@ -480,6 +480,14 @@ export default function HomePage() {
         .order("created_at", { ascending: true });
       setDmMessages(msgs || []);
     }
+  }
+
+  // Go to a user's profile page (used by chat messages + online staff list —
+  // client wants clicking a user to open their profile first, and the DM
+  // option lives inside the profile page from there).
+  function goToProfile(username?: string) {
+    if (!username) return;
+    router.push(`/profile/${username}`);
   }
 
   // Send DM
@@ -628,7 +636,7 @@ export default function HomePage() {
             <div style={{ padding: "30px", textAlign: "center", color: "#4a7a94" }}>No chat data yet.</div>
           ) : topChatters.map((u, i) => (
             <div key={i} className="m-row" style={{ cursor: "pointer" }}
-              onClick={() => { setModal(null); openDm(u.username); }}
+              onClick={() => { setModal(null); goToProfile(u.username); }}
             >
               <span className="m-rank">#{u.rank}</span>
               <Av l={u.username} size={32} />
@@ -871,8 +879,8 @@ export default function HomePage() {
                             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                               <span
                                 style={{ fontWeight: 700, fontSize: 12.5, color: m.color, cursor: "pointer" }}
-                                onClick={() => openDm(m.username)}
-                                title={`DM ${m.username}`}
+                                onClick={() => goToProfile(m.username)}
+                                title={`View ${m.username}'s profile`}
                               >
                                 {m.username}
                               </span>
@@ -1067,7 +1075,7 @@ export default function HomePage() {
                 </div>
               </div>
 
-              {/* Online Staff — live + admin manage + click-to-DM */}
+              {/* Online Staff — live + admin manage + click-to-view-profile */}
               <div className="side-box">
                 <div className="side-box-hdr">
                   <span>🛡️ Online Staff</span>
@@ -1123,8 +1131,8 @@ export default function HomePage() {
                       key={i}
                       className="side-staff-item"
                       style={{ cursor: "pointer" }}
-                      onClick={() => openDm(s.username)}
-                      title={`DM ${s.username}`}
+                      onClick={() => goToProfile(s.username)}
+                      title={`View ${s.username}'s profile`}
                     >
                       <span className="side-staff-dot" />
                       <Av l={s.username} size={26} />
