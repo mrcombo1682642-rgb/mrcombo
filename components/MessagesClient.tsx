@@ -1,11 +1,14 @@
 "use client";
-import Navbar from "./Navbar";
-import Footer from "./Footbar";
+import Navbar from "@/components/Navbar";
+import Footbar from "@/components/Footbar";
 
 // ============================================================
 // MessagesClient.tsx
 // Two-pane DM system, styled to match the forum's dark theme
 // (same palette / components as ThreadPage.tsx).
+// Fully responsive: on mobile only one pane (inbox OR thread)
+// is shown at a time, switched via a CSS class on the container
+// so the media query has full control (no inline-style conflicts).
 //
 // Expects these RPC functions (already created via SQL migration):
 //   get_or_create_conversation(target_username text) -> uuid
@@ -106,7 +109,8 @@ export default function MessagesClient() {
   const [loadingThread, setLoadingThread] = useState(false);
   const [sending, setSending] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [mobileShowThread, setMobileShowThread] = useState(false);
+  // Controls which pane is active ON MOBILE ONLY. Desktop always shows both.
+  const [mobileView, setMobileView] = useState<"inbox" | "thread">("inbox");
 
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
@@ -160,7 +164,7 @@ export default function MessagesClient() {
     otherUserHint?: Pick<ConversationRow, "other_username" | "other_avatar_url" | "other_role" | "other_last_seen">
   ) {
     setActiveConvId(convId);
-    setMobileShowThread(true);
+    setMobileView("thread");
     setLoadingThread(true);
     setErrorMsg(null);
 
@@ -267,14 +271,15 @@ export default function MessagesClient() {
 
      <Navbar/>
 
-      <div style={{ maxWidth: 1000, margin: "0 auto", padding: "80px 16px" }}>
-        <div style={{ fontSize: 13, color: "#4a7a94", marginBottom: 14 }}>
+      <div className="dm-page-wrap" style={{ maxWidth: 1000, margin: "0 auto", padding: "80px 16px" }}>
+        <div className="dm-breadcrumb" style={{ fontSize: 13, color: "#4a7a94", marginBottom: 14 }}>
           <span style={{ cursor: "pointer" }} onClick={() => router.push("/")}>Home</span>
           {" > "}
           <span style={{ color: "#6cc6ff" }}>Messages</span>
         </div>
 
         <div
+          className={`dm-shell dm-view-${mobileView}`}
           style={{
             background: "#0a1520",
             border: "1px solid #1a2535",
@@ -286,20 +291,12 @@ export default function MessagesClient() {
           }}
         >
           {/* ---------- Left pane: inbox ---------- */}
-          <div
-            style={{
-              width: 300,
-              flexShrink: 0,
-              borderRight: "1px solid #1a2535",
-              display: mobileShowThread ? "none" : "flex",
-              flexDirection: "column",
-            }}
-            className="dm-inbox-pane"
-          >
+          <div className="dm-inbox" style={{ width: 300, flexShrink: 0, borderRight: "1px solid #1a2535", display: "flex", flexDirection: "column" }}>
             <div style={{
               padding: "14px 18px",
               borderBottom: "1px solid #1a2535",
               background: "linear-gradient(90deg, #4c5fd6, #6c7ef0)",
+              flexShrink: 0,
             }}>
               <span style={{ fontSize: 15, fontWeight: 800, color: "#fff" }}>💬 Messages</span>
             </div>
@@ -387,14 +384,11 @@ export default function MessagesClient() {
           </div>
 
           {/* ---------- Right pane: conversation ---------- */}
-          <div style={{
-            flex: 1, display: "flex",
-            flexDirection: "column", minWidth: 0,
-          }}>
+          <div className="dm-thread" style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
             {!activeConvId && (
               <div style={{
                 flex: 1, display: "flex", alignItems: "center", justifyContent: "center",
-                color: "#4a7a94", fontSize: 13,
+                color: "#4a7a94", fontSize: 13, padding: "0 20px", textAlign: "center",
               }}>
                 Select a conversation to start chatting
               </div>
@@ -404,14 +398,15 @@ export default function MessagesClient() {
               <>
                 <div style={{
                   padding: "10px 18px", borderBottom: "1px solid #1a2535",
-                  display: "flex", alignItems: "center", gap: 10, background: "#0d1c28",
+                  display: "flex", alignItems: "center", gap: 10, background: "#0d1c28", flexShrink: 0,
                 }}>
                   <button
-                    onClick={() => setMobileShowThread(false)}
+                    onClick={() => setMobileView("inbox")}
                     className="dm-back-btn"
                     style={{
-                      display: "none", background: "transparent", border: "none",
-                      color: "#9ab0bf", fontSize: 16, cursor: "pointer", padding: 0, marginRight: 2,
+                      background: "transparent", border: "none",
+                      color: "#9ab0bf", fontSize: 18, cursor: "pointer", padding: "0 4px 0 0",
+                      lineHeight: 1,
                     }}
                   >
                     ←
@@ -431,9 +426,12 @@ export default function MessagesClient() {
                       : initials(activeOtherUser?.other_username || "?")}
                   </div>
 
-                  <div>
+                  <div style={{ minWidth: 0 }}>
                     <div
-                      style={{ fontSize: 13, fontWeight: 700, color: "#6cc6ff", cursor: "pointer" }}
+                      style={{
+                        fontSize: 13, fontWeight: 700, color: "#6cc6ff", cursor: "pointer",
+                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                      }}
                       onClick={() => activeOtherUser?.other_username && router.push(`/profile/${activeOtherUser.other_username}`)}
                     >
                       {activeOtherUser?.other_username}
@@ -446,6 +444,7 @@ export default function MessagesClient() {
                         width: 6, height: 6, borderRadius: "50%",
                         background: otherOnline ? "#22c55e" : "#4a7a94",
                         boxShadow: otherOnline ? "0 0 5px #22c55e" : "none",
+                        flexShrink: 0,
                       }} />
                       {otherOnline ? "Online" : "Offline"}
                     </div>
@@ -465,7 +464,7 @@ export default function MessagesClient() {
                     const mine = m.sender_id === currentUserId;
                     return (
                       <div key={m.id} style={{ display: "flex", justifyContent: mine ? "flex-end" : "flex-start" }}>
-                        <div style={{
+                        <div className="dm-bubble" style={{
                           maxWidth: "70%", padding: "8px 12px", borderRadius: 12,
                           fontSize: 13.5, lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-word",
                           background: mine ? "#6c63ff" : "#122236",
@@ -496,8 +495,8 @@ export default function MessagesClient() {
                 <form
                   onSubmit={handleSend}
                   style={{
-                    padding: "12px 18px", borderTop: "1px solid #1a2535",
-                    display: "flex", gap: 8, alignItems: "center",
+                    padding: "10px 12px", borderTop: "1px solid #1a2535",
+                    display: "flex", gap: 8, alignItems: "center", flexShrink: 0,
                   }}
                 >
                   <input
@@ -506,7 +505,7 @@ export default function MessagesClient() {
                     onChange={(e) => setDraft(e.target.value)}
                     placeholder="Type a message..."
                     style={{
-                      flex: 1, background: "#050a0f", border: "1px solid #1a2535",
+                      flex: 1, minWidth: 0, background: "#050a0f", border: "1px solid #1a2535",
                       borderRadius: 999, padding: "9px 16px", color: "#fff",
                       fontSize: 13.5, outline: "none", fontFamily: "inherit",
                     }}
@@ -521,9 +520,10 @@ export default function MessagesClient() {
                     type="submit"
                     disabled={!draft.trim() || sending}
                     style={{
+                      flexShrink: 0,
                       background: draft.trim() && !sending ? "#6c63ff" : "#3a3760",
                       border: "none", color: "#fff", fontSize: 13, fontWeight: 700,
-                      borderRadius: 999, padding: "9px 20px",
+                      borderRadius: 999, padding: "9px 18px",
                       cursor: draft.trim() && !sending ? "pointer" : "not-allowed",
                     }}
                   >
@@ -536,13 +536,54 @@ export default function MessagesClient() {
         </div>
       </div>
 
+      {/*
+        Responsive rules:
+        - Desktop (>640px): inbox (300px) + thread side by side, both always visible.
+        - Mobile (<=640px): only ONE pane visible at a time, controlled by the
+          dm-view-inbox / dm-view-thread class on the container. The back
+          button (hidden on desktop) switches back to the inbox.
+      */}
       <style>{`
+        .dm-back-btn {
+          display: none;
+        }
+
         @media (max-width: 640px) {
-          .dm-inbox-pane { width: 100% !important; display: ${"flex"} !important; }
+          .dm-page-wrap {
+            padding: 64px 8px 24px !important;
+          }
+          .dm-breadcrumb {
+            margin-bottom: 8px !important;
+          }
+          .dm-shell {
+            height: calc(100vh - 110px) !important;
+            min-height: 380px !important;
+            border-radius: 8px !important;
+          }
+          .dm-inbox,
+          .dm-thread {
+            width: 100% !important;
+            flex: 1 1 100% !important;
+          }
+          .dm-view-inbox .dm-thread {
+            display: none !important;
+          }
+          .dm-view-thread .dm-inbox {
+            display: none !important;
+          }
+          .dm-inbox {
+            border-right: none !important;
+          }
+          .dm-back-btn {
+            display: inline-block !important;
+          }
+          .dm-bubble {
+            max-width: 85% !important;
+          }
         }
       `}</style>
 
-     <Footer/>
+     <Footbar/>
 
     </div>
   );

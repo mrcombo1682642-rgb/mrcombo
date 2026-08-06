@@ -1199,6 +1199,49 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
           padding-left: 22px;
           margin: 8px 0;
         }
+        .rte-content .link-card {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 8px;
+          background: #0a1520;
+          border: 1px solid #1a3042;
+          border-radius: 10px;
+          padding: 16px 22px;
+          margin: 10px 0;
+          max-width: 100%;
+          width: fit-content;
+        }
+        .rte-content .link-card-label {
+          font-size: 13px;
+          font-weight: 700;
+          color: #c8dde8;
+          text-align: center;
+          word-break: break-word;
+        }
+        .rte-content .link-card-arrow {
+          font-size: 15px;
+          color: #4a7a94;
+          line-height: 1;
+        }
+        .rte-content .link-card-url {
+          display: inline-block;
+          background: rgba(0,180,216,0.12);
+          border: 1px solid rgba(0,180,216,0.4);
+          border-radius: 7px;
+          padding: 8px 20px;
+          color: #00b4d8;
+          font-weight: 700;
+          font-size: 13px;
+          text-decoration: none;
+          word-break: break-all;
+          text-align: center;
+          max-width: 100%;
+        }
+        .rte-content .link-card-url:hover {
+          background: rgba(0,180,216,0.22);
+          border-color: #00b4d8;
+        }
       `}</style>
 
     </div>

@@ -20,6 +20,48 @@ const TEXT_COLORS = [
   "#f59e0b", "#a855f7", "#6c63ff", "#ffffff",
 ];
 
+// ── Shared markup for a "hidden content" block (used by both the
+// toolbar 🔒 button and the [hide]...[/hide] shortcode parser below) ──
+function buildHiddenBlockHTML(innerHTML: string): string {
+  return (
+    `<div class="hlb-pending" contenteditable="false" style="border:1px dashed #f0a500;border-radius:6px;padding:8px 10px;margin:6px 0;background:rgba(240,165,0,0.08);">` +
+    `<div class="hlb-editor-label" style="color:#f0a500;font-size:11px;font-weight:700;margin-bottom:4px;">🔒 HIDDEN CONTENT — visible after reply, or instantly for Admins &amp; Premium users</div>` +
+    `<div class="hlb-editor-content">${innerHTML}</div>` +
+    `</div><div><br></div>`
+  );
+}
+
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+// ── Builds a standalone link CARD: a short label on top, a
+// downward arrow, then the actual clickable link as its own button —
+// each on its own row, inside a bordered box. Used for both regular
+// inserted links and links placed inside a hidden-content block. ──
+function buildLinkCardHTML(safeUrl: string, safeLabel: string): string {
+  return (
+    `<div class="link-card" contenteditable="false">` +
+    `<div class="link-card-label">${safeLabel}</div>` +
+    `<div class="link-card-arrow">↓</div>` +
+    `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer" class="link-card-url">${safeUrl}</a>` +
+    `</div><div><br></div>`
+  );
+}
+
+// ── Converts any [hide]...[/hide] shortcode typed directly into the
+// editor into the same hidden-block markup the 🔒 toolbar button
+// produces, so both ways of hiding content end up handled identically
+// by the extraction logic in handlePost(). ──
+function convertHideShortcodes(html: string): string {
+  return html.replace(/\[hide\]([\s\S]*?)\[\/hide\]/gi, (_match, inner: string) => {
+    return buildHiddenBlockHTML(inner);
+  });
+}
+
 export default function CreateThreadModal({
   isOpen,
   onClose,
@@ -103,24 +145,62 @@ export default function CreateThreadModal({
     e.target.value = "";
   }
 
+  // ── Insert a professional link CARD: label on top, an arrow,
+  // then the clickable link — each in its own row inside a bordered
+  // box, instead of a cramped inline chip. ──
   function handleLinkInsert() {
-    const url = prompt("Enter URL:");
-    if (url) exec("createLink", url);
-  }
-
-  function insertHiddenLink() {
-    const url = prompt("Hidden link ka URL daalo (Premium users turant dekhenge, Free users comment karne ke baad):");
+    const url = prompt("Enter the link URL (e.g. https://example.com):");
     if (!url || !url.trim()) return;
 
-    const label = prompt("Link text/label (leave empty to show the raw URL):", "") || url.trim();
+    let defaultLabel = url.trim();
+    try {
+      defaultLabel = new URL(url.trim()).hostname.replace(/^www\./, "");
+    } catch {
+      // not a valid absolute URL — just fall back to the raw text
+    }
 
-    const wrappedHTML =
-      `<div class="hlb-pending" contenteditable="false" style="border:1px dashed #f0a500;border-radius:6px;padding:8px 10px;margin:6px 0;background:rgba(240,165,0,0.08);">` +
-      `<div class="hlb-editor-label" style="color:#f0a500;font-size:11px;font-weight:700;margin-bottom:4px;">🔒 HIDDEN LINK — visible after reply / for Premium users</div>` +
-      `<div class="hlb-editor-content"><a href="${url.trim()}" target="_blank" rel="noopener noreferrer">${label}</a></div>` +
-      `</div><div><br></div>`;
+    const labelInput = prompt("Display text for this link (optional):", defaultLabel);
+    const label = (labelInput && labelInput.trim()) ? labelInput.trim() : defaultLabel;
 
-    document.execCommand("insertHTML", false, wrappedHTML);
+    const safeUrl = url.trim().replace(/"/g, "&quot;");
+    const safeLabel = escapeHtml(label);
+    const html = buildLinkCardHTML(safeUrl, safeLabel);
+
+    document.execCommand("insertHTML", false, html);
+    editorRef.current?.focus();
+  }
+
+  // ── Insert a hidden content block (text OR link) via the toolbar
+  // button. If it's a link, ask for a short professional display
+  // label too — same pattern as handleLinkInsert — instead of
+  // showing the raw URL as the visible text. ──
+  function insertHiddenContent() {
+    const raw = prompt("Please enter the text or link you want to hide:");
+    if (!raw || !raw.trim()) return;
+
+    const trimmed = raw.trim();
+    const isUrl = /^https?:\/\/\S+$/i.test(trimmed);
+
+    let innerHTML: string;
+
+    if (isUrl) {
+      let defaultLabel = trimmed;
+      try {
+        defaultLabel = new URL(trimmed).hostname.replace(/^www\./, "");
+      } catch {
+        // not a valid absolute URL — fall back to raw text
+      }
+      const labelInput = prompt("Display text for this hidden link:", defaultLabel);
+      const label = (labelInput && labelInput.trim()) ? labelInput.trim() : defaultLabel;
+
+      const safeUrl = trimmed.replace(/"/g, "&quot;");
+      const safeLabel = escapeHtml(label);
+      innerHTML = buildLinkCardHTML(safeUrl, safeLabel);
+    } else {
+      innerHTML = escapeHtml(trimmed);
+    }
+
+    document.execCommand("insertHTML", false, buildHiddenBlockHTML(innerHTML));
     editorRef.current?.focus();
   }
 
@@ -136,7 +216,11 @@ export default function CreateThreadModal({
 
   async function handlePost() {
     setError("");
-    const rawHTML = editorRef.current?.innerHTML.trim() || "";
+
+    // Run [hide]...[/hide] shortcode conversion first, so any hidden
+    // content typed directly (without using the 🔒 button) is picked
+    // up by the same extraction logic below.
+    const rawHTML = convertHideShortcodes(editorRef.current?.innerHTML.trim() || "");
     const plainText = editorRef.current?.innerText.trim() || "";
 
     if (!title.trim()) {
@@ -393,7 +477,12 @@ export default function CreateThreadModal({
             <ToolBtn label="🔗" title="Insert Link" onClick={handleLinkInsert} />
             <ToolBtn label="🖼️" title="Insert Image" onClick={handleImageInsert} />
             <input ref={imageInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={onImageSelected} />
-            <ToolBtn label="🔒" title="Insert a Hidden Link (visible instantly for Premium, after reply for Free users)" color="#f0a500" onClick={insertHiddenLink} />
+            <ToolBtn
+              label="🔒"
+              title="Hide content (text or link) — visible instantly for Admins & Premium users, after reply for everyone else"
+              color="#f0a500"
+              onClick={insertHiddenContent}
+            />
             <Divider />
             <ToolBtn label="•≡" title="Bullet List" onClick={() => exec("insertUnorderedList")} />
             <ToolBtn label="1≡" title="Numbered List" onClick={() => exec("insertOrderedList")} />
@@ -420,7 +509,9 @@ export default function CreateThreadModal({
           />
 
           <div style={{ fontSize: 11, color: "#4a7a94", marginTop: 6 }}>
-            "Tip: Click the 🔒 button and add a link — Premium users will see it instantly, while Free users will only see it after they comment on this thread."
+            Tip: Click the 🔒 button to hide a piece of text or a link — or just wrap it yourself like{" "}
+            <code style={{ color: "#c8dde8" }}>[hide]your text or link[/hide]</code>. Admins and Premium
+            users will see it instantly; everyone else needs to reply to this thread first.
           </div>
 
           <style>{`
@@ -449,8 +540,77 @@ export default function CreateThreadModal({
               border-radius: 6px;
               margin: 8px 0;
             }
+            .rte-editable a.thread-link-chip,
             .rte-editable a {
+              display: inline-flex;
+              align-items: center;
+              gap: 6px;
+              max-width: 100%;
+              padding: 5px 12px;
+              margin: 2px 2px;
+              background: rgba(0,180,216,0.08);
+              border: 1px solid rgba(0,180,216,0.35);
+              border-radius: 6px;
+              color: #6cc6ff;
+              font-size: 13px;
+              font-weight: 600;
+              text-decoration: none;
+              white-space: nowrap;
+              overflow: hidden;
+              text-overflow: ellipsis;
+              vertical-align: middle;
+            }
+            .rte-editable a.thread-link-chip::before,
+            .rte-editable a::before {
+              content: "🔗";
+              font-size: 11px;
+            }
+            .rte-editable a:hover {
+              background: rgba(0,180,216,0.16);
+              border-color: #00b4d8;
+            }
+            .rte-editable .link-card {
+              display: flex;
+              flex-direction: column;
+              align-items: center;
+              gap: 8px;
+              background: #0a1520;
+              border: 1px solid #1a3042;
+              border-radius: 10px;
+              padding: 16px 22px;
+              margin: 10px 0;
+              max-width: 100%;
+              width: fit-content;
+            }
+            .rte-editable .link-card-label {
+              font-size: 13px;
+              font-weight: 700;
+              color: #c8dde8;
+              text-align: center;
+              word-break: break-word;
+            }
+            .rte-editable .link-card-arrow {
+              font-size: 15px;
+              color: #4a7a94;
+              line-height: 1;
+            }
+            .rte-editable .link-card-url {
+              display: inline-block;
+              background: rgba(0,180,216,0.12);
+              border: 1px solid rgba(0,180,216,0.4);
+              border-radius: 7px;
+              padding: 8px 20px;
               color: #00b4d8;
+              font-weight: 700;
+              font-size: 13px;
+              text-decoration: none;
+              word-break: break-all;
+              text-align: center;
+              max-width: 100%;
+            }
+            .rte-editable .link-card-url:hover {
+              background: rgba(0,180,216,0.22);
+              border-color: #00b4d8;
             }
             .rte-editable ul, .rte-editable ol {
               padding-left: 22px;
