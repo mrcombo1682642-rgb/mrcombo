@@ -20,13 +20,15 @@ const TEXT_COLORS = [
   "#f59e0b", "#a855f7", "#6c63ff", "#ffffff",
 ];
 
-// ── Shared markup for a "hidden content" block (used by both the
-// toolbar 🔒 button and the [hide]...[/hide] shortcode parser below) ──
+// ── Shared markup for a "hidden content" placeholder block shown
+// inside the EDITOR only (while composing). The real, polished card
+// (locked/unlocked) is rendered separately on the thread page once
+// the post is saved — see resolveHiddenBlocks() in ThreadPage.tsx. ──
 function buildHiddenBlockHTML(innerHTML: string): string {
   return (
-    `<div class="hlb-pending" contenteditable="false" style="border:1px dashed #f0a500;border-radius:6px;padding:8px 10px;margin:6px 0;background:rgba(240,165,0,0.08);">` +
-    `<div class="hlb-editor-label" style="color:#f0a500;font-size:11px;font-weight:700;margin-bottom:4px;">🔒 HIDDEN CONTENT — visible after reply, or instantly for Admins &amp; Premium users</div>` +
-    `<div class="hlb-editor-content">${innerHTML}</div>` +
+    `<div class="hlb-pending" contenteditable="false" style="border:1px solid #2a3a6e;border-radius:10px;padding:12px 14px;margin:10px 0;background:#0d1730;">` +
+    `<div class="hlb-editor-label" style="display:flex;align-items:center;gap:6px;color:#8fa8ff;font-size:12px;font-weight:700;margin-bottom:6px;">🔗 Hidden Content <span style="font-weight:500;color:#6a7a9a;font-size:11px;">— revealed after reply, or instantly for Admins &amp; Premium</span></div>` +
+    `<div class="hlb-editor-content" style="color:#c8dde8;font-size:13px;">${innerHTML}</div>` +
     `</div><div><br></div>`
   );
 }
@@ -36,20 +38,6 @@ function escapeHtml(str: string): string {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
-}
-
-// ── Builds a standalone link CARD: a short label on top, a
-// downward arrow, then the actual clickable link as its own button —
-// each on its own row, inside a bordered box. Used for both regular
-// inserted links and links placed inside a hidden-content block. ──
-function buildLinkCardHTML(safeUrl: string, safeLabel: string): string {
-  return (
-    `<div class="link-card" contenteditable="false">` +
-    `<div class="link-card-label">${safeLabel}</div>` +
-    `<div class="link-card-arrow">↓</div>` +
-    `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer" class="link-card-url">${safeUrl}</a>` +
-    `</div><div><br></div>`
-  );
 }
 
 // ── Converts any [hide]...[/hide] shortcode typed directly into the
@@ -91,6 +79,16 @@ export default function CreateThreadModal({
   const [showFontSize, setShowFontSize] = useState(false);
   const imageInputRef = useRef<HTMLInputElement>(null);
 
+  // Hidden content dialog (replaces old window.prompt() flow)
+  const [showHiddenDialog, setShowHiddenDialog] = useState(false);
+  const [hiddenInput, setHiddenInput] = useState("");
+  // Remembers where the cursor was in the editor when the dialog was
+  // opened — clicking into the popup's textarea moves browser focus
+  // (and collapses the editor's selection), so without restoring this
+  // range first, execCommand("insertHTML") has nowhere valid to insert
+  // into and silently does nothing.
+  const savedRangeRef = useRef<Range | null>(null);
+
   useEffect(() => {
     if (isOpen) {
       supabase.auth.getUser().then(({ data }) => setUser(data.user));
@@ -109,6 +107,8 @@ export default function CreateThreadModal({
       setShowPoll(false);
       setPollQuestion("");
       setPollOptions(["", ""]);
+      setShowHiddenDialog(false);
+      setHiddenInput("");
       if (editorRef.current) editorRef.current.innerHTML = "";
     }
   }, [isOpen]);
@@ -145,9 +145,9 @@ export default function CreateThreadModal({
     e.target.value = "";
   }
 
-  // ── Insert a professional link CARD: label on top, an arrow,
-  // then the clickable link — each in its own row inside a bordered
-  // box, instead of a cramped inline chip. ──
+  // ── Insert a regular (always-visible) link. Kept simple — a plain
+  // <a> tag — because the global .rte-content CSS on the thread page
+  // already renders every link as a nice pill/chip automatically. ──
   function handleLinkInsert() {
     const url = prompt("Enter the link URL (e.g. https://example.com):");
     if (!url || !url.trim()) return;
@@ -164,44 +164,63 @@ export default function CreateThreadModal({
 
     const safeUrl = url.trim().replace(/"/g, "&quot;");
     const safeLabel = escapeHtml(label);
-    const html = buildLinkCardHTML(safeUrl, safeLabel);
 
-    document.execCommand("insertHTML", false, html);
-    editorRef.current?.focus();
+    exec("insertHTML", `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer">${safeLabel}</a>`);
   }
 
-  // ── Insert a hidden content block (text OR link) via the toolbar
-  // button. If it's a link, ask for a short professional display
-  // label too — same pattern as handleLinkInsert — instead of
-  // showing the raw URL as the visible text. ──
-  function insertHiddenContent() {
-    const raw = prompt("Please enter the text or link you want to hide:");
-    if (!raw || !raw.trim()) return;
+  // ── Open the inline "hide content" dialog from the toolbar button ──
+  function openHiddenDialog() {
+    // Save the current cursor/selection position inside the editor
+    // (if there is one) so we can restore it when the user clicks
+    // "Insert" — by then focus will have moved to the textarea/button.
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount > 0 && editorRef.current?.contains(sel.anchorNode)) {
+      savedRangeRef.current = sel.getRangeAt(0).cloneRange();
+    } else {
+      savedRangeRef.current = null;
+    }
 
-    const trimmed = raw.trim();
+    setHiddenInput("");
+    setShowHiddenDialog(true);
+    setShowColorPicker(false);
+    setShowFontSize(false);
+  }
+
+  // ── Confirm + insert a hidden content block (text OR link) ──
+  function confirmHiddenContent() {
+    const trimmed = hiddenInput.trim();
+    if (!trimmed) return;
+
     const isUrl = /^https?:\/\/\S+$/i.test(trimmed);
 
-    let innerHTML: string;
+    const innerHTML = isUrl
+      ? `<a href="${trimmed.replace(/"/g, "&quot;")}" target="_blank" rel="noopener noreferrer">${escapeHtml(trimmed)}</a>`
+      : escapeHtml(trimmed);
 
-    if (isUrl) {
-      let defaultLabel = trimmed;
-      try {
-        defaultLabel = new URL(trimmed).hostname.replace(/^www\./, "");
-      } catch {
-        // not a valid absolute URL — fall back to raw text
+    const editor = editorRef.current;
+    if (editor) {
+      editor.focus();
+      const sel = window.getSelection();
+      if (sel) {
+        sel.removeAllRanges();
+        if (savedRangeRef.current) {
+          // Restore exactly where the cursor was before the dialog opened.
+          sel.addRange(savedRangeRef.current);
+        } else {
+          // No prior cursor position (e.g. editor was never focused yet) —
+          // fall back to inserting at the end of whatever's already there.
+          const range = document.createRange();
+          range.selectNodeContents(editor);
+          range.collapse(false);
+          sel.addRange(range);
+        }
       }
-      const labelInput = prompt("Display text for this hidden link:", defaultLabel);
-      const label = (labelInput && labelInput.trim()) ? labelInput.trim() : defaultLabel;
-
-      const safeUrl = trimmed.replace(/"/g, "&quot;");
-      const safeLabel = escapeHtml(label);
-      innerHTML = buildLinkCardHTML(safeUrl, safeLabel);
-    } else {
-      innerHTML = escapeHtml(trimmed);
     }
 
     document.execCommand("insertHTML", false, buildHiddenBlockHTML(innerHTML));
-    editorRef.current?.focus();
+    setShowHiddenDialog(false);
+    setHiddenInput("");
+    savedRangeRef.current = null;
   }
 
   function addPollOption() {
@@ -249,106 +268,140 @@ export default function CreateThreadModal({
 
     setPosting(true);
 
-    // ── Extract hidden blocks from content before saving ──
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(rawHTML, "text/html");
-    const hiddenEls = Array.from(doc.querySelectorAll(".hlb-pending"));
-    const hiddenContents: string[] = [];
+    try {
+      // ── Extract hidden blocks from content before saving ──
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(rawHTML, "text/html");
+      const hiddenEls = Array.from(doc.querySelectorAll(".hlb-pending"));
+      const hiddenContents: string[] = [];
 
-    hiddenEls.forEach((el, idx) => {
-      const contentEl = el.querySelector(".hlb-editor-content");
-      hiddenContents.push(contentEl ? contentEl.innerHTML : el.innerHTML);
-      const placeholder = doc.createElement("div");
-      placeholder.className = "hlb-placeholder";
-      placeholder.setAttribute("data-hlb-temp-index", String(idx));
-      el.replaceWith(placeholder);
-    });
+      hiddenEls.forEach((el, idx) => {
+        const contentEl = el.querySelector(".hlb-editor-content");
+        hiddenContents.push(contentEl ? contentEl.innerHTML : el.innerHTML);
+        const placeholder = doc.createElement("div");
+        placeholder.className = "hlb-placeholder";
+        placeholder.setAttribute("data-hlb-temp-index", String(idx));
+        el.replaceWith(placeholder);
+      });
 
-    const content = doc.body.innerHTML;
+      const content = doc.body.innerHTML;
 
-    const { data: threadData, error: threadError } = await supabase
-      .from("threads")
-      .insert({
-        title: title.trim(),
-        content,
-        category,
-        subcategory,
-        user_id: user.id,
-        prefix: prefix === "No Prefix" ? null : prefix,
-        include_signature: includeSignature,
-        disable_smilies: disableSmilies,
-        subscription_type: subscriptionType,
-        pinned: false,
-        locked: false,
-      })
-      .select()
-      .single();
+      const { data: threadData, error: threadError } = await supabase
+        .from("threads")
+        .insert({
+          title: title.trim(),
+          content,
+          category,
+          subcategory,
+          user_id: user.id,
+          prefix: prefix === "No Prefix" ? null : prefix,
+          include_signature: includeSignature,
+          disable_smilies: disableSmilies,
+          subscription_type: subscriptionType,
+          pinned: false,
+          locked: false,
+        })
+        .select()
+        .single();
 
-    if (threadError || !threadData) {
+      if (threadError || !threadData) {
+        if (threadError?.message?.includes("DAILY_LIMIT_REACHED")) {
+          setError("Aap ne aaj ki 17 posts/threads ki limit poori kar li hai. Kal try karein ya premium upgrade karein.");
+        } else {
+          setError(threadError?.message || "Failed to create thread.");
+        }
+        return;
+      }
+
+      // ── Insert hidden blocks (now that we have the real thread_id) ──
+      if (hiddenContents.length > 0) {
+        const blockIdMap: Record<number, string> = {};
+        let hadInsertFailure = false;
+
+        for (let i = 0; i < hiddenContents.length; i++) {
+          const { data: blockData, error: blockError } = await supabase
+            .from("thread_hidden_blocks")
+            .insert({
+              thread_id: threadData.id,
+              content: hiddenContents[i],
+              created_by: user.id,
+            })
+            .select()
+            .single();
+
+          if (blockError || !blockData) {
+            console.error(
+              `Hidden block ${i} failed to save:`,
+              blockError?.message
+            );
+            hadInsertFailure = true;
+          } else {
+            blockIdMap[i] = blockData.id;
+          }
+        }
+
+        const doc2 = parser.parseFromString(content, "text/html");
+        doc2.querySelectorAll(".hlb-placeholder").forEach(el => {
+          const idx = el.getAttribute("data-hlb-temp-index");
+          const blockId = idx !== null ? blockIdMap[Number(idx)] : undefined;
+          if (blockId) {
+            el.setAttribute("data-hlb-id", blockId);
+            el.removeAttribute("data-hlb-temp-index");
+          }
+        });
+        const finalContent = doc2.body.innerHTML;
+
+        const { error: updateError } = await supabase
+          .from("threads")
+          .update({ content: finalContent })
+          .eq("id", threadData.id);
+
+        if (updateError) {
+          console.error("Failed to attach hidden blocks to thread:", updateError.message);
+          hadInsertFailure = true;
+        }
+
+        // Thread is already created at this point — don't block navigation,
+        // but let the user know the hidden link may not have saved so they
+        // can retry via Edit instead of assuming it worked silently.
+        if (hadInsertFailure) {
+          alert(
+            "Thread posted, but one or more hidden links could not be saved. " +
+            "Please edit the thread and re-add the hidden content."
+          );
+        }
+      }
+
+      // Poll
+      if (showPoll) {
+        const validOptions = pollOptions.filter(o => o.trim());
+        await supabase.from("thread_polls").insert({
+          thread_id: threadData.id,
+          question: pollQuestion.trim(),
+          options: validOptions,
+        });
+      }
+
+      // Subscription
+      if (subscriptionType !== "none") {
+        await supabase.from("thread_subscriptions").insert({
+          thread_id: threadData.id,
+          user_id: user.id,
+          notify_type: subscriptionType,
+        });
+      }
+
+      onClose();
+      router.push(`/thread/${threadData.id}`);
+    } catch (err) {
+      console.error("Network error creating thread:", err);
+      setError("Network error while posting. Please check your connection and try again.");
+    } finally {
       setPosting(false);
-      if (threadError?.message?.includes("DAILY_LIMIT_REACHED")) {
-        setError("Aap ne aaj ki 17 posts/threads ki limit poori kar li hai. Kal try karein ya premium upgrade karein.");
-      } else {
-        setError(threadError?.message || "Failed to create thread.");
-      }
-      return;
     }
-
-    // ── Insert hidden blocks (now that we have the real thread_id) ──
-    if (hiddenContents.length > 0) {
-      const blockIdMap: Record<number, string> = {};
-
-      for (let i = 0; i < hiddenContents.length; i++) {
-        const { data: blockData, error: blockError } = await supabase
-          .from("thread_hidden_blocks")
-          .insert({ thread_id: threadData.id, content: hiddenContents[i] })
-          .select()
-          .single();
-
-        if (!blockError && blockData) {
-          blockIdMap[i] = blockData.id;
-        }
-      }
-
-      const doc2 = parser.parseFromString(content, "text/html");
-      doc2.querySelectorAll(".hlb-placeholder").forEach(el => {
-        const idx = el.getAttribute("data-hlb-temp-index");
-        const blockId = idx !== null ? blockIdMap[Number(idx)] : undefined;
-        if (blockId) {
-          el.setAttribute("data-hlb-id", blockId);
-          el.removeAttribute("data-hlb-temp-index");
-        }
-      });
-      const finalContent = doc2.body.innerHTML;
-
-      await supabase.from("threads").update({ content: finalContent }).eq("id", threadData.id);
-    }
-
-    // Poll
-    if (showPoll) {
-      const validOptions = pollOptions.filter(o => o.trim());
-      await supabase.from("thread_polls").insert({
-        thread_id: threadData.id,
-        question: pollQuestion.trim(),
-        options: validOptions,
-      });
-    }
-
-    // Subscription
-    if (subscriptionType !== "none") {
-      await supabase.from("thread_subscriptions").insert({
-        thread_id: threadData.id,
-        user_id: user.id,
-        notify_type: subscriptionType,
-      });
-    }
-
-    setPosting(false);
-    onClose();
-    router.push(`/thread/${threadData.id}`);
   }
-  
-  
+
+
   return (
     <div
       style={{
@@ -361,6 +414,7 @@ export default function CreateThreadModal({
     >
 
       <div
+        className="ctm-panel"
         style={{
           background: "#0a1520", border: "1px solid #1a2535", borderRadius: 12,
           width: "100%", maxWidth: 720, maxHeight: "90vh", overflowY: "auto",
@@ -374,9 +428,12 @@ export default function CreateThreadModal({
           display: "flex", alignItems: "center", justifyContent: "space-between",
           position: "sticky", top: 0, zIndex: 2,
         }}>
-          <div>
+          <div style={{ minWidth: 0 }}>
             <div style={{ fontWeight: 700, fontSize: 16, color: "#fff" }}>Create Thread</div>
-            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.7)", marginTop: 2 }}>
+            <div style={{
+              fontSize: 12, color: "rgba(255,255,255,0.7)", marginTop: 2,
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+            }}>
               Posting in: {category} / {subcategory}
             </div>
           </div>
@@ -387,10 +444,10 @@ export default function CreateThreadModal({
           }}>✕</button>
         </div>
 
-        <div style={{ padding: "20px" }}>
+        <div className="ctm-body" style={{ padding: "20px" }}>
 
           {/* Prefix + Title */}
-          <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+          <div className="ctm-title-row" style={{ display: "flex", gap: 8, marginBottom: 12 }}>
             <select
               value={prefix}
               onChange={e => setPrefix(e.target.value)}
@@ -407,7 +464,7 @@ export default function CreateThreadModal({
               onChange={e => setTitle(e.target.value)}
               placeholder="Thread title..."
               style={{
-                flex: 1, background: "#050a0f", border: "1px solid #1a2535",
+                flex: 1, minWidth: 0, background: "#050a0f", border: "1px solid #1a2535",
                 borderRadius: 6, padding: "10px 14px", color: "#c8dde8",
                 fontSize: 14, outline: "none",
               }}
@@ -477,12 +534,69 @@ export default function CreateThreadModal({
             <ToolBtn label="🔗" title="Insert Link" onClick={handleLinkInsert} />
             <ToolBtn label="🖼️" title="Insert Image" onClick={handleImageInsert} />
             <input ref={imageInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={onImageSelected} />
-            <ToolBtn
-              label="🔒"
-              title="Hide content (text or link) — visible instantly for Admins & Premium users, after reply for everyone else"
-              color="#f0a500"
-              onClick={insertHiddenContent}
-            />
+
+            {/* Hidden content — inline dialog instead of window.prompt() */}
+            <div style={{ position: "relative" }}>
+              <ToolBtn
+                label="🔒"
+                title="Hide content (text or link) — visible instantly for Admins & Premium users, after reply for everyone else"
+                color="#f0a500"
+                onClick={openHiddenDialog}
+              />
+              {showHiddenDialog && (
+                <div style={{
+                  position: "absolute", top: "100%", left: 0, marginTop: 4,
+                  background: "#0d1c28", border: "1px solid #1a2535", borderRadius: 8,
+                  padding: 14, zIndex: 20, width: 280,
+                  boxShadow: "0 12px 28px rgba(0,0,0,0.5)",
+                }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "#f0a500", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
+                    🔒 Add Hidden Content
+                  </div>
+                  <div style={{ fontSize: 11.5, color: "#6a8a9a", marginBottom: 8, lineHeight: 1.4 }}>
+                    Enter text or a link. It stays hidden until someone replies — Admins and Premium members see it instantly.
+                  </div>
+                  <textarea
+                    value={hiddenInput}
+                    onChange={e => setHiddenInput(e.target.value)}
+                    placeholder="Text or https://..."
+                    autoFocus
+                    style={{
+                      width: "100%", minHeight: 70, background: "#050a0f", border: "1px solid #1a2535",
+                      borderRadius: 6, padding: "8px 10px", color: "#c8dde8", fontSize: 13,
+                      outline: "none", resize: "vertical", boxSizing: "border-box", marginBottom: 10,
+                    }}
+                    onKeyDown={e => {
+                      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) confirmHiddenContent();
+                      if (e.key === "Escape") setShowHiddenDialog(false);
+                    }}
+                  />
+                  <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                    <button
+                      onClick={() => setShowHiddenDialog(false)}
+                      style={{
+                        background: "transparent", border: "1px solid #2a3545", borderRadius: 6,
+                        padding: "6px 14px", color: "#9ab0bf", fontSize: 12.5, cursor: "pointer",
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={confirmHiddenContent}
+                      disabled={!hiddenInput.trim()}
+                      style={{
+                        background: hiddenInput.trim() ? "#f0a500" : "#4a3f20", border: "none", borderRadius: 6,
+                        padding: "6px 14px", color: "#1a1200", fontSize: 12.5, fontWeight: 700,
+                        cursor: hiddenInput.trim() ? "pointer" : "not-allowed",
+                      }}
+                    >
+                      Insert
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
             <Divider />
             <ToolBtn label="•≡" title="Bullet List" onClick={() => exec("insertUnorderedList")} />
             <ToolBtn label="1≡" title="Numbered List" onClick={() => exec("insertOrderedList")} />
@@ -540,77 +654,9 @@ export default function CreateThreadModal({
               border-radius: 6px;
               margin: 8px 0;
             }
-            .rte-editable a.thread-link-chip,
             .rte-editable a {
-              display: inline-flex;
-              align-items: center;
-              gap: 6px;
-              max-width: 100%;
-              padding: 5px 12px;
-              margin: 2px 2px;
-              background: rgba(0,180,216,0.08);
-              border: 1px solid rgba(0,180,216,0.35);
-              border-radius: 6px;
-              color: #6cc6ff;
-              font-size: 13px;
-              font-weight: 600;
-              text-decoration: none;
-              white-space: nowrap;
-              overflow: hidden;
-              text-overflow: ellipsis;
-              vertical-align: middle;
-            }
-            .rte-editable a.thread-link-chip::before,
-            .rte-editable a::before {
-              content: "🔗";
-              font-size: 11px;
-            }
-            .rte-editable a:hover {
-              background: rgba(0,180,216,0.16);
-              border-color: #00b4d8;
-            }
-            .rte-editable .link-card {
-              display: flex;
-              flex-direction: column;
-              align-items: center;
-              gap: 8px;
-              background: #0a1520;
-              border: 1px solid #1a3042;
-              border-radius: 10px;
-              padding: 16px 22px;
-              margin: 10px 0;
-              max-width: 100%;
-              width: fit-content;
-            }
-            .rte-editable .link-card-label {
-              font-size: 13px;
-              font-weight: 700;
-              color: #c8dde8;
-              text-align: center;
-              word-break: break-word;
-            }
-            .rte-editable .link-card-arrow {
-              font-size: 15px;
-              color: #4a7a94;
-              line-height: 1;
-            }
-            .rte-editable .link-card-url {
-              display: inline-block;
-              background: rgba(0,180,216,0.12);
-              border: 1px solid rgba(0,180,216,0.4);
-              border-radius: 7px;
-              padding: 8px 20px;
               color: #00b4d8;
-              font-weight: 700;
-              font-size: 13px;
-              text-decoration: none;
               word-break: break-all;
-              text-align: center;
-              max-width: 100%;
-            }
-            .rte-editable .link-card-url:hover {
-              background: rgba(0,180,216,0.22);
-              border-color: #00b4d8;
             }
             .rte-editable ul, .rte-editable ol {
               padding-left: 22px;
@@ -651,7 +697,7 @@ export default function CreateThreadModal({
                       }}
                       placeholder={`Option ${i + 1}`}
                       style={{
-                        flex: 1, background: "#0a1520", border: "1px solid #1a2535",
+                        flex: 1, minWidth: 0, background: "#0a1520", border: "1px solid #1a2535",
                         borderRadius: 6, padding: "8px 12px", color: "#c8dde8",
                         fontSize: 13, outline: "none",
                       }}
@@ -659,7 +705,7 @@ export default function CreateThreadModal({
                     {pollOptions.length > 2 && (
                       <button onClick={() => removePollOption(i)} style={{
                         background: "#1a2535", border: "none", borderRadius: 6,
-                        padding: "0 12px", color: "#ef4444", cursor: "pointer", fontSize: 14,
+                        padding: "0 12px", color: "#ef4444", cursor: "pointer", fontSize: 14, flexShrink: 0,
                       }}>✕</button>
                     )}
                   </div>
@@ -716,7 +762,7 @@ export default function CreateThreadModal({
                     name="subscription"
                     checked={subscriptionType === opt.value}
                     onChange={() => setSubscriptionType(opt.value)}
-                    style={{ accentColor: "#6c63ff", width: 14, height: 14, cursor: "pointer" }}
+                    style={{ accentColor: "#6c63ff", width: 14, height: 14, cursor: "pointer", flexShrink: 0 }}
                   />
                   <span style={{ fontSize: 12.5, color: "#9ab0bf" }}>{opt.label}</span>
                 </label>
@@ -734,7 +780,7 @@ export default function CreateThreadModal({
           )}
 
           {/* Action buttons */}
-          <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
+          <div className="ctm-actions" style={{ display: "flex", gap: 10, marginTop: 20 }}>
             <button
               onClick={handlePost}
               disabled={posting}
@@ -758,6 +804,20 @@ export default function CreateThreadModal({
           </div>
         </div>
       </div>
+
+      <style>{`
+        @media (max-width: 480px) {
+          .ctm-panel {
+            border-radius: 10px !important;
+          }
+          .ctm-body {
+            padding: 14px !important;
+          }
+          .ctm-title-row {
+            flex-direction: column;
+          }
+        }
+      `}</style>
     </div>
   );
 }
@@ -808,7 +868,7 @@ function Checkbox({ checked, onChange }: { checked: boolean; onChange: () => voi
       }}
     >
       {checked && <span style={{ color: "#fff", fontSize: 12 }}>✓</span>}
-    
+
     </div>
   );
 }

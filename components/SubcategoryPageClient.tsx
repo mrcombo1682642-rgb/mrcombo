@@ -5,21 +5,17 @@ import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import type { ThreadListItem } from "@/lib/types";
 import CreateThreadModal from "@/components/CreateThreadModal";
+import ThreadList from "@/components/ThreadList";
 
-type SortField = "last_post" | "title" | "views" | "replies" | "likes" | "created";
+type SortField =
+  | "last_post"
+  | "title"
+  | "views"
+  | "replies"
+  | "likes"
+  | "created";
+
 type SortOrder = "asc" | "desc";
-
-function timeAgo(dateStr: string) {
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `${days}d ago`;
-  return new Date(dateStr).toLocaleDateString();
-}
 
 const PAGE_SIZE = 20;
 
@@ -33,232 +29,391 @@ export default function SubcategoryPageClient({
   const [modalOpen, setModalOpen] = useState(false);
   const [allThreads, setAllThreads] = useState<ThreadListItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [user, setUser] = useState<any>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-  // Current user role + like state (for list-row like/unlike + admin remove)
+  const [user, setUser] = useState<any>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [currentUserRole, setCurrentUserRole] = useState<string | null>(null);
-  const [likedThreadIds, setLikedThreadIds] = useState<Set<string>>(new Set());
+
+  const [likedThreadIds, setLikedThreadIds] = useState<Set<string>>(
+    new Set()
+  );
 
   const [sortField, setSortField] = useState<SortField>("last_post");
   const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
   const [page, setPage] = useState(1);
-  const [onlineCount] = useState(() => Math.floor(Math.random() * 30) + 5);
+  const [onlineCount, setOnlineCount] = useState<number | null>(null);
+
+  // --------------------------------------------------
+  // Online users (display-only placeholder)
+  // --------------------------------------------------
+
+  useEffect(() => {
+    setOnlineCount(Math.floor(Math.random() * 30) + 5);
+  }, []);
+
+  // --------------------------------------------------
+  // Load threads
+  // --------------------------------------------------
 
   async function loadThreads() {
     setLoading(true);
-    const { data, error } = await supabase.rpc("get_thread_list", {
-      category_input: slug,
-      subcategory_input: subcategory,
-    });
+    setLoadError(null);
 
-    if (error) {
-      console.error("Failed to load threads:", error.message);
+    try {
+      const { data, error } = await supabase.rpc("get_thread_list", {
+        category_input: slug,
+        subcategory_input: subcategory,
+      });
+
+      if (error) {
+        console.error("Failed to load threads:", error.message);
+        setAllThreads([]);
+        setLoadError("Could not load threads. Please try again.");
+      } else {
+        setAllThreads((data || []) as ThreadListItem[]);
+      }
+    } catch (err) {
+      console.error("Network error loading threads:", err);
       setAllThreads([]);
-    } else {
-      setAllThreads(data || []);
+      setLoadError(
+        "Network error while loading threads. Please check your connection."
+      );
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }
 
+  // --------------------------------------------------
+  // Load current user
+  // --------------------------------------------------
+
   async function loadCurrentUser() {
-    const { data } = await supabase.auth.getUser();
-    const uid = data.user?.id || null;
-    setUser(data.user);
-    setCurrentUserId(uid);
-    if (uid) {
-      const { data: profile } = await supabase
+    try {
+      const { data } = await supabase.auth.getUser();
+      const currentUser = data.user || null;
+      const uid = currentUser?.id || null;
+
+      setUser(currentUser);
+      setCurrentUserId(uid);
+
+      if (!uid) {
+        setCurrentUserRole(null);
+        return;
+      }
+
+      const { data: profile, error } = await supabase
         .from("profiles")
         .select("role")
         .eq("id", uid)
         .single();
-      setCurrentUserRole(profile?.role || "member");
-    } else {
+
+      if (error) {
+        console.error("Failed to load user role:", error.message);
+        setCurrentUserRole("member");
+      } else {
+        setCurrentUserRole(profile?.role || "member");
+      }
+    } catch (err) {
+      console.error("Network error loading user:", err);
+      setUser(null);
+      setCurrentUserId(null);
       setCurrentUserRole(null);
     }
   }
 
+  // --------------------------------------------------
+  // Initial load
+  // --------------------------------------------------
+
   useEffect(() => {
+    setPage(1);
     loadThreads();
     loadCurrentUser();
-    setPage(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug, subcategory]);
 
-  // Fetch which of the currently-loaded threads the user has liked
+  // --------------------------------------------------
+  // Load liked threads
+  // --------------------------------------------------
+
   useEffect(() => {
     async function loadLikedThreads() {
       if (!currentUserId || allThreads.length === 0) {
         setLikedThreadIds(new Set());
         return;
       }
-      const ids = allThreads.map((t) => t.id);
-      const { data } = await supabase
-        .from("thread_likes")
-        .select("thread_id")
-        .eq("user_id", currentUserId)
-        .in("thread_id", ids);
-      if (data) setLikedThreadIds(new Set(data.map((r: any) => r.thread_id)));
+
+      try {
+        const ids = allThreads.map((thread) => thread.id);
+
+        const { data, error } = await supabase
+          .from("thread_likes")
+          .select("thread_id")
+          .eq("user_id", currentUserId)
+          .in("thread_id", ids);
+
+        if (error) {
+          console.error("Failed to load liked threads:", error.message);
+          return;
+        }
+
+        if (data) {
+          setLikedThreadIds(
+            new Set(data.map((row: { thread_id: string }) => row.thread_id))
+          );
+        }
+      } catch (err) {
+        console.error("Network error loading liked threads:", err);
+      }
     }
+
     loadLikedThreads();
   }, [allThreads, currentUserId]);
+
+  // --------------------------------------------------
+  // Role check
+  // --------------------------------------------------
 
   function isAdminOrMod() {
     return currentUserRole === "admin" || currentUserRole === "moderator";
   }
 
-  // ── Like / Unlike from the list row ──
+  // --------------------------------------------------
+  // Like / Unlike
+  // --------------------------------------------------
+
   async function toggleThreadLike(e: React.MouseEvent, threadId: string) {
     e.preventDefault();
     e.stopPropagation();
-    if (!currentUserId) return;
+
+    if (!currentUserId) {
+      alert("Please login to like threads.");
+      return;
+    }
 
     const isLiked = likedThreadIds.has(threadId);
 
-    if (isLiked) {
-      await supabase.from("thread_likes").delete()
-        .eq("thread_id", threadId).eq("user_id", currentUserId);
-      setLikedThreadIds(prev => { const s = new Set(prev); s.delete(threadId); return s; });
-      setAllThreads(prev => prev.map(t =>
-        t.id === threadId ? { ...t, likes_count: Math.max(0, (t.likes_count || 0) - 1) } : t
-      ));
-    } else {
-      await supabase.from("thread_likes").insert({ thread_id: threadId, user_id: currentUserId });
-      setLikedThreadIds(prev => new Set(prev).add(threadId));
-      setAllThreads(prev => prev.map(t =>
-        t.id === threadId ? { ...t, likes_count: (t.likes_count || 0) + 1 } : t
-      ));
+    try {
+      if (isLiked) {
+        const { error } = await supabase
+          .from("thread_likes")
+          .delete()
+          .eq("thread_id", threadId)
+          .eq("user_id", currentUserId);
+
+        if (error) {
+          console.error("Unlike error:", error.message);
+          return;
+        }
+
+        setLikedThreadIds((prev) => {
+          const next = new Set(prev);
+          next.delete(threadId);
+          return next;
+        });
+
+        setAllThreads((prev) =>
+          prev.map((thread) =>
+            thread.id === threadId
+              ? {
+                  ...thread,
+                  likes_count: Math.max(0, (thread.likes_count || 0) - 1),
+                }
+              : thread
+          )
+        );
+      } else {
+        const { error } = await supabase
+          .from("thread_likes")
+          .insert({ thread_id: threadId, user_id: currentUserId });
+
+        if (error) {
+          console.error("Like error:", error.message);
+          return;
+        }
+
+        setLikedThreadIds((prev) => {
+          const next = new Set(prev);
+          next.add(threadId);
+          return next;
+        });
+
+        setAllThreads((prev) =>
+          prev.map((thread) =>
+            thread.id === threadId
+              ? { ...thread, likes_count: (thread.likes_count || 0) + 1 }
+              : thread
+          )
+        );
+      }
+    } catch (err) {
+      console.error("Network error toggling like:", err);
     }
   }
 
-  // ── Admin/mod: remove thread directly from the list ──
+  // --------------------------------------------------
+  // Admin / Moderator delete
+  // --------------------------------------------------
+
   async function handleDeleteThread(e: React.MouseEvent, threadId: string) {
     e.preventDefault();
     e.stopPropagation();
-    if (!confirm("Delete this thread permanently? This cannot be undone.")) return;
 
-    const { error } = await supabase.from("threads").delete().eq("id", threadId);
-    if (error) {
-      console.error("Delete thread error:", error.message);
-      alert("Could not delete thread.");
-      return;
+    if (!isAdminOrMod()) return;
+
+    const confirmed = confirm(
+      "Delete this thread permanently? This cannot be undone."
+    );
+
+    if (!confirmed) return;
+
+    try {
+      const { error } = await supabase
+        .from("threads")
+        .delete()
+        .eq("id", threadId);
+
+      if (error) {
+        console.error("Delete thread error:", error.message);
+        alert("Could not delete thread.");
+        return;
+      }
+
+      setAllThreads((prev) =>
+        prev.filter((thread) => thread.id !== threadId)
+      );
+
+      setLikedThreadIds((prev) => {
+        const next = new Set(prev);
+        next.delete(threadId);
+        return next;
+      });
+    } catch (err) {
+      console.error("Network error deleting thread:", err);
+      alert("Network error. Please try again.");
     }
-    setAllThreads(prev => prev.filter(t => t.id !== threadId));
   }
+
+  // --------------------------------------------------
+  // Sorting
+  // --------------------------------------------------
 
   function sortThreads(list: ThreadListItem[]) {
     const sorted = [...list];
+
     sorted.sort((a, b) => {
       let cmp = 0;
+
       switch (sortField) {
         case "title":
           cmp = a.title.localeCompare(b.title);
           break;
         case "views":
-          cmp = a.views_count - b.views_count;
+          cmp = (a.views_count || 0) - (b.views_count || 0);
           break;
         case "replies":
-          cmp = a.reply_count - b.reply_count;
+          cmp = (a.reply_count || 0) - (b.reply_count || 0);
           break;
         case "likes":
           cmp = (a.likes_count || 0) - (b.likes_count || 0);
           break;
         case "created":
-          cmp = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
-          break;
         case "last_post":
         default:
-          cmp = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+          cmp =
+            new Date(a.created_at).getTime() -
+            new Date(b.created_at).getTime();
           break;
       }
+
       return sortOrder === "asc" ? cmp : -cmp;
     });
-    // Pinned always first regardless of sort
+
+    // Pinned threads always stay at the top.
     return [
-      ...sorted.filter(t => t.pinned),
-      ...sorted.filter(t => !t.pinned),
+      ...sorted.filter((thread) => thread.pinned),
+      ...sorted.filter((thread) => !thread.pinned),
     ];
   }
 
   const sortedThreads = sortThreads(allThreads);
-  const totalPages = Math.max(1, Math.ceil(sortedThreads.length / PAGE_SIZE));
-  const pageThreads = sortedThreads.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  const totalPages = Math.max(
+    1,
+    Math.ceil(sortedThreads.length / PAGE_SIZE)
+  );
+
+  const pageThreads = sortedThreads.slice(
+    (page - 1) * PAGE_SIZE,
+    page * PAGE_SIZE
+  );
+
+  // --------------------------------------------------
+  // Keep page valid after deleting threads
+  // --------------------------------------------------
+
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [page, totalPages]);
+
+  // --------------------------------------------------
+  // Render
+  // --------------------------------------------------
 
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        background: "#050a0f",
-        color: "#c8dde8",
-        padding: "80px 16px",
-      }}
-    >
-      <div style={{ maxWidth: 1100, margin: "0 auto" }}>
-
+    <div className="scp-page">
+      <div className="scp-container">
         {/* Breadcrumb */}
-        <div style={{ fontSize: 13, color: "#4a7a94", marginBottom: 14 }}>
-          <Link href="/" style={{ color: "#4a7a94" }}>Home</Link>
+        <div className="scp-breadcrumb">
+          <Link href="/" className="scp-crumb-link">
+            Home
+          </Link>
           {" > "}
-          <Link href={`/forum/${slug}`} style={{ color: "#4a7a94" }}>{slug}</Link>
+          <Link href={`/forum/${slug}`} className="scp-crumb-link">
+            {slug}
+          </Link>
           {" > "}
-          {subcategory}
+          <span className="scp-crumb-current">{subcategory}</span>
         </div>
 
         {/* Header */}
-        <div
-          style={{
-            background: "#6c63ff",
-            padding: "12px 18px",
-            borderRadius: "8px 8px 0 0",
-            fontWeight: 700,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            flexWrap: "wrap",
-            gap: 8,
-          }}
-        >
+        <div className="scp-header">
           <span>{subcategory}</span>
+
           {user && (
             <button
+              type="button"
               onClick={() => setModalOpen(true)}
-              style={{
-                background: "rgba(255,255,255,0.2)",
-                color: "#fff",
-                padding: "7px 16px",
-                borderRadius: 6,
-                border: "none",
-                cursor: "pointer",
-                fontWeight: 600,
-                fontSize: 13,
-              }}
+              className="scp-create-btn"
             >
               + Create Thread
             </button>
           )}
         </div>
 
-        {/* Online users strip */}
-        <div style={{
-          background: "#080e18", border: "1px solid #0d2030", borderTop: "none",
-          padding: "8px 18px", fontSize: 12, color: "#4a7a94",
-          display: "flex", alignItems: "center", gap: 6,
-        }}>
-          👁️ Users browsing this forum: <strong style={{ color: "#6cc6ff" }}>{onlineCount} Guest(s)</strong>
+        {/* Online users */}
+        <div className="scp-online-bar">
+          👁️ Users browsing this forum:{" "}
+          <strong className="scp-online-count">
+            {onlineCount ?? "..."} Guest(s)
+          </strong>
         </div>
 
         {/* Sort bar */}
-        <div style={{
-          background: "#0a1520", border: "1px solid #0d2030", borderTop: "none",
-          padding: "10px 18px", display: "flex", alignItems: "center", gap: 10,
-          flexWrap: "wrap", justifyContent: "space-between",
-        }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <span style={{ fontSize: 12, color: "#4a7a94" }}>Sort by:</span>
+        <div className="scp-sort-bar">
+          <div className="scp-sort-controls">
+            <span className="scp-sort-label">Sort by:</span>
+
             <select
               value={sortField}
-              onChange={e => setSortField(e.target.value as SortField)}
-              style={selectStyle}
+              onChange={(e) => {
+                setSortField(e.target.value as SortField);
+                setPage(1);
+              }}
+              className="scp-select"
             >
               <option value="last_post">Last Post</option>
               <option value="title">Title</option>
@@ -267,201 +422,92 @@ export default function SubcategoryPageClient({
               <option value="likes">Likes</option>
               <option value="created">Created Date</option>
             </select>
+
             <select
               value={sortOrder}
-              onChange={e => setSortOrder(e.target.value as SortOrder)}
-              style={selectStyle}
+              onChange={(e) => {
+                setSortOrder(e.target.value as SortOrder);
+                setPage(1);
+              }}
+              className="scp-select"
             >
               <option value="desc">Descending</option>
               <option value="asc">Ascending</option>
             </select>
           </div>
-          <div style={{ fontSize: 12, color: "#4a7a94" }}>
+
+          <div className="scp-thread-count">
             {sortedThreads.length} thread{sortedThreads.length !== 1 ? "s" : ""}
           </div>
         </div>
 
-        {/* Table header (desktop only) */}
-        <div
-          className="thread-table-header"
-          style={{
-            background: "#080e18", border: "1px solid #0d2030", borderTop: "none",
-            padding: "10px 18px", display: "grid",
-            gridTemplateColumns: "1fr 90px 90px 110px 150px",
-            gap: 12, fontSize: 11, fontWeight: 700, color: "#4a7a94",
-            letterSpacing: 0.5, textTransform: "uppercase",
-          }}
-        >
-          <span>Thread / Author</span>
-          <span style={{ textAlign: "center" }}>Views</span>
-          <span style={{ textAlign: "center" }}>Replies</span>
-          <span style={{ textAlign: "center" }}>Likes</span>
-          <span>Last Post</span>
-        </div>
-
-        {/* Thread list */}
-        <div style={{
-          background: "#080e18", border: "1px solid #0d2030", borderTop: "none",
-          borderRadius: "0 0 8px 8px", overflow: "hidden",
-        }}>
+        {/* Threads (card-style list — see ThreadList.tsx) */}
+        <div className="scp-thread-panel">
           {loading ? (
-            <div style={{ textAlign: "center", padding: "60px 0", color: "#4a7a94" }}>
-              Loading threads...
-            </div>
-          ) : pageThreads.length === 0 ? (
-            <div style={{ textAlign: "center", padding: "60px 0", color: "#4a7a94" }}>
-              No threads yet. Be the first to start one!
+            <div className="scp-loading">Loading threads...</div>
+          ) : loadError ? (
+            <div className="scp-error">
+              {loadError}
+              <button
+                type="button"
+                onClick={loadThreads}
+                className="scp-retry-btn"
+              >
+                Retry
+              </button>
             </div>
           ) : (
-            pageThreads.map((t, i) => {
-              const isLiked = likedThreadIds.has(t.id);
-              return (
-                <Link key={t.id} href={`/thread/${t.id}`} style={{ textDecoration: "none", display: "block" }}>
-                  <div
-                    className="thread-row"
-                    style={{
-                      padding: "12px 18px",
-                      borderBottom: i !== pageThreads.length - 1 ? "1px solid #0a1520" : "none",
-                      display: "grid",
-                      gridTemplateColumns: "1fr 90px 90px 110px 150px",
-                      gap: 12, alignItems: "center",
-                      background: t.pinned ? "#0d1326" : "transparent",
-                      transition: "background 0.15s",
-                    }}
-                    onMouseEnter={e => (e.currentTarget.style.background = t.pinned ? "#121a38" : "#0a1520")}
-                    onMouseLeave={e => (e.currentTarget.style.background = t.pinned ? "#0d1326" : "transparent")}
-                  >
-                    {/* Thread / Author */}
-                    <div style={{ display: "flex", gap: 10, alignItems: "flex-start", minWidth: 0 }}>
-                      <div style={{ fontSize: 18, flexShrink: 0, marginTop: 2 }}>
-                        {t.locked ? "🔒" : t.pinned ? "📌" : "👤"}
-                      </div>
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                          {t.pinned && (
-                            <span style={{
-                              fontSize: 10, fontWeight: 700, color: "#6c63ff",
-                              background: "rgba(108,99,255,0.15)", padding: "1px 6px", borderRadius: 3,
-                            }}>PINNED</span>
-                          )}
-                          <span style={{
-                            fontSize: 14, fontWeight: 600, color: "#e4e4e7",
-                            overflow: "hidden", textOverflow: "ellipsis",
-                          }}>
-                            {t.title}
-                          </span>
-                        </div>
-                        <div style={{ fontSize: 11.5, color: "#4a7a94", marginTop: 3 }}>
-                          Started by{" "}
-                          <span style={{ color: "#ff9b6b", fontWeight: 600 }}>{t.username || "Unknown"}</span>
-                          {" · "}{timeAgo(t.created_at)}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Views */}
-                    <div className="thread-stat" style={{ textAlign: "center", fontSize: 13, color: "#9ab0bf" }}>
-                      <span className="mobile-label">Views: </span>{t.views_count}
-                    </div>
-
-                    {/* Replies */}
-                    <div className="thread-stat" style={{ textAlign: "center", fontSize: 13, color: "#9ab0bf" }}>
-                      <span className="mobile-label">Replies: </span>{t.reply_count}
-                    </div>
-
-                    {/* Likes + admin remove */}
-                    <div className="thread-stat" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, flexWrap: "wrap" }}>
-                      <span className="mobile-label">Likes: </span>
-                      <button
-                        onClick={(e) => toggleThreadLike(e, t.id)}
-                        disabled={!currentUserId}
-                        title={currentUserId ? (isLiked ? "Unlike" : "Like") : "Login to like"}
-                        style={{
-                          display: "flex", alignItems: "center", gap: 5,
-                          background: isLiked ? "rgba(231,76,140,0.15)" : "transparent",
-                          border: `1px solid ${isLiked ? "#e74c8c" : "#1a2535"}`,
-                          borderRadius: 5, padding: "3px 8px",
-                          color: isLiked ? "#e74c8c" : "#9ab0bf",
-                          fontSize: 12, fontWeight: 700,
-                          cursor: currentUserId ? "pointer" : "default",
-                        }}
-                      >
-                        {isLiked ? "❤️" : "🤍"} {t.likes_count || 0}
-                      </button>
-
-                      {isAdminOrMod() && (
-                        <button
-                          onClick={(e) => handleDeleteThread(e, t.id)}
-                          title="Delete thread (admin)"
-                          style={{
-                            background: "transparent",
-                            border: "1px solid #ef444444",
-                            borderRadius: 5, padding: "3px 7px",
-                            color: "#ef4444", fontSize: 12, fontWeight: 700,
-                            cursor: "pointer",
-                          }}
-                        >
-                          🗑️
-                        </button>
-                      )}
-                    </div>
-
-                    {/* Last Post */}
-                    <div className="thread-stat" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <div style={{
-                        width: 26, height: 26, borderRadius: 5, flexShrink: 0,
-                        background: "#1a2535", display: "flex", alignItems: "center",
-                        justifyContent: "center", fontSize: 11, fontWeight: 700, color: "#6cc6ff",
-                        overflow: "hidden",
-                      }}>
-                        {t.avatar_url
-                          ? <img src={t.avatar_url} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                          : (t.username || "?").slice(0, 2).toUpperCase()
-                        }
-                      </div>
-                      <div style={{ fontSize: 11, color: "#6a8a9a", minWidth: 0 }}>
-                        <div style={{ color: "#9ab0bf", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {t.username || "Unknown"}
-                        </div>
-                        <div>{timeAgo(t.created_at)}</div>
-                      </div>
-                    </div>
-                  </div>
-                </Link>
-              );
-            })
+            <ThreadList
+              threads={pageThreads}
+              currentUserId={currentUserId}
+              currentUserRole={currentUserRole}
+              likedThreadIds={likedThreadIds}
+              onToggleLike={toggleThreadLike}
+              onDeleteThread={handleDeleteThread}
+            />
           )}
         </div>
 
         {/* Pagination */}
-        {totalPages > 1 && (
-          <div style={{
-            display: "flex", justifyContent: "center", alignItems: "center",
-            gap: 6, marginTop: 18, flexWrap: "wrap",
-          }}>
+        {!loading && !loadError && totalPages > 1 && (
+          <div className="scp-pagination">
             <button
-              onClick={() => setPage(p => Math.max(1, p - 1))}
+              type="button"
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
               disabled={page === 1}
-              style={pageBtnStyle(false, page === 1)}
+              className="scp-page-btn"
             >
               ‹ Prev
             </button>
+
             {Array.from({ length: totalPages }, (_, i) => i + 1)
-              .filter(p => p === 1 || p === totalPages || Math.abs(p - page) <= 1)
+              .filter(
+                (p) =>
+                  p === 1 || p === totalPages || Math.abs(p - page) <= 1
+              )
               .map((p, idx, arr) => (
-                <span key={p} style={{ display: "flex", alignItems: "center" }}>
+                <span key={p} className="scp-page-group">
                   {idx > 0 && arr[idx - 1] !== p - 1 && (
-                    <span style={{ color: "#4a7a94", padding: "0 4px" }}>…</span>
+                    <span className="scp-ellipsis">…</span>
                   )}
-                  <button onClick={() => setPage(p)} style={pageBtnStyle(p === page, false)}>
+
+                  <button
+                    type="button"
+                    onClick={() => setPage(p)}
+                    className={
+                      p === page ? "scp-page-btn scp-page-active" : "scp-page-btn"
+                    }
+                  >
                     {p}
                   </button>
                 </span>
               ))}
+
             <button
-              onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+              type="button"
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
               disabled={page === totalPages}
-              style={pageBtnStyle(false, page === totalPages)}
+              className="scp-page-btn"
             >
               Next ›
             </button>
@@ -469,6 +515,7 @@ export default function SubcategoryPageClient({
         )}
       </div>
 
+      {/* Create Thread Modal */}
       <CreateThreadModal
         isOpen={modalOpen}
         onClose={() => {
@@ -479,44 +526,197 @@ export default function SubcategoryPageClient({
         subcategory={subcategory}
       />
 
-      <style>{`
-        @media (max-width: 760px) {
-          .thread-table-header { display: none !important; }
-          .thread-row {
-            grid-template-columns: 1fr !important;
-            gap: 8px !important;
-          }
-          .thread-stat {
-            text-align: left !important;
-            display: flex !important;
-            gap: 4px;
-            font-size: 12px !important;
-          }
-          .mobile-label {
-            color: #4a7a94;
-            font-weight: 600;
-          }
+      <style jsx>{`
+        .scp-page {
+          min-height: 100vh;
+          background: #050a0f;
+          color: #c8dde8;
+          padding: 80px 16px;
         }
-        @media (min-width: 761px) {
-          .mobile-label { display: none; }
+
+        .scp-container {
+          max-width: 1100px;
+          margin: 0 auto;
+        }
+
+        .scp-breadcrumb {
+          font-size: 13px;
+          color: #4a7a94;
+          margin-bottom: 14px;
+        }
+
+        .scp-crumb-link {
+          color: #4a7a94;
+          text-decoration: none;
+        }
+
+        .scp-crumb-link:hover {
+          color: #6cc6ff;
+        }
+
+        .scp-crumb-current {
+          color: #7fa3b8;
+        }
+
+        .scp-header {
+          background: #6c63ff;
+          padding: 12px 18px;
+          border-radius: 8px 8px 0 0;
+          font-weight: 700;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          flex-wrap: wrap;
+          gap: 8px;
+        }
+
+        .scp-create-btn {
+          background: rgba(255, 255, 255, 0.2);
+          color: #fff;
+          padding: 7px 16px;
+          border-radius: 6px;
+          border: none;
+          cursor: pointer;
+          font-weight: 600;
+          font-size: 13px;
+        }
+
+        .scp-create-btn:hover {
+          background: rgba(255, 255, 255, 0.3);
+        }
+
+        .scp-online-bar {
+          background: #080e18;
+          border: 1px solid #0d2030;
+          border-top: none;
+          padding: 8px 18px;
+          font-size: 12px;
+          color: #4a7a94;
+        }
+
+        .scp-online-count {
+          color: #6cc6ff;
+        }
+
+        .scp-sort-bar {
+          background: #0a1520;
+          border: 1px solid #0d2030;
+          border-top: none;
+          padding: 10px 18px;
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          flex-wrap: wrap;
+          justify-content: space-between;
+          border-radius: 0 0 8px 8px;
+          margin-bottom: 16px;
+        }
+
+        .scp-sort-controls {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+
+        .scp-sort-label {
+          font-size: 12px;
+          color: #4a7a94;
+        }
+
+        .scp-select {
+          background: #050a0f;
+          border: 1px solid #1a2535;
+          border-radius: 6px;
+          padding: 6px 10px;
+          color: #c8dde8;
+          font-size: 12px;
+          outline: none;
+          cursor: pointer;
+        }
+
+        .scp-thread-count {
+          font-size: 12px;
+          color: #4a7a94;
+        }
+
+        .scp-thread-panel {
+          margin-top: 0;
+        }
+
+        .scp-loading {
+          text-align: center;
+          padding: 60px 20px;
+          color: #4a7a94;
+          font-size: 13px;
+        }
+
+        .scp-error {
+          text-align: center;
+          padding: 40px 20px;
+          color: #ff8b8b;
+          font-size: 13px;
+        }
+
+        .scp-retry-btn {
+          display: block;
+          margin: 14px auto 0;
+          background: #6c63ff;
+          border: none;
+          border-radius: 6px;
+          color: #fff;
+          padding: 8px 18px;
+          font-size: 12.5px;
+          font-weight: 700;
+          cursor: pointer;
+        }
+
+        .scp-pagination {
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          gap: 6px;
+          margin-top: 18px;
+          flex-wrap: wrap;
+        }
+
+        .scp-page-group {
+          display: flex;
+          align-items: center;
+        }
+
+        .scp-ellipsis {
+          color: #4a7a94;
+          padding: 0 4px;
+        }
+
+        .scp-page-btn {
+          background: #0a1520;
+          border: 1px solid #1a2535;
+          border-radius: 6px;
+          padding: 6px 12px;
+          color: #c8dde8;
+          font-size: 13px;
+          font-weight: 500;
+          cursor: pointer;
+        }
+
+        .scp-page-btn:disabled {
+          opacity: 0.4;
+          cursor: not-allowed;
+        }
+
+        .scp-page-btn:hover:not(:disabled) {
+          border-color: #6c63ff;
+        }
+
+        .scp-page-active {
+          background: #6c63ff;
+          border-color: #6c63ff;
+          color: #fff;
+          font-weight: 700;
         }
       `}</style>
     </div>
   );
-}
-
-const selectStyle: React.CSSProperties = {
-  background: "#050a0f", border: "1px solid #1a2535", borderRadius: 6,
-  padding: "6px 10px", color: "#c8dde8", fontSize: 12, outline: "none", cursor: "pointer",
-};
-
-function pageBtnStyle(active: boolean, disabled: boolean): React.CSSProperties {
-  return {
-    background: active ? "#6c63ff" : "#0a1520",
-    border: `1px solid ${active ? "#6c63ff" : "#1a2535"}`,
-    borderRadius: 6, padding: "6px 12px", color: active ? "#fff" : "#c8dde8",
-    fontSize: 13, fontWeight: active ? 700 : 500,
-    cursor: disabled ? "not-allowed" : "pointer",
-    opacity: disabled ? 0.4 : 1,
-  };
 }
