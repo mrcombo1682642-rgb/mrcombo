@@ -219,18 +219,21 @@ function PostAuthorSidebar({
   const badge = ROLE_BADGES[role || "member"] || ROLE_BADGES.member;
 
   return (
-    <div style={{ width: 150, flexShrink: 0 }}>
-      <div
-        onClick={onClick}
-        style={{ fontSize: 14, fontWeight: 700, color: "#6cc6ff", cursor: username ? "pointer" : "default" }}
-      >
-        {username || "Unknown"}
-      </div>
-      <div style={{ fontSize: 12, color: online ? "#22c55e" : "#4a7a94", fontWeight: 600, marginTop: 2 }}>
-        {online ? "Online" : "Offline"}
+    <div className="post-sidebar" style={{ width: 150, flexShrink: 0, display: "flex", flexDirection: "column" }}>
+      <div className="post-sidebar-name-block">
+        <div
+          onClick={onClick}
+          style={{ fontSize: 14, fontWeight: 700, color: "#6cc6ff", cursor: username ? "pointer" : "default" }}
+        >
+          {username || "Unknown"}
+        </div>
+        <div style={{ fontSize: 12, color: online ? "#22c55e" : "#4a7a94", fontWeight: 600, marginTop: 2 }}>
+          {online ? "Online" : "Offline"}
+        </div>
       </div>
 
       <div
+        className="post-sidebar-avatar"
         onClick={onClick}
         style={{
           width: 96, height: 96, borderRadius: 8, margin: "10px 0 10px",
@@ -246,7 +249,7 @@ function PostAuthorSidebar({
         }
       </div>
 
-      <div style={{
+      <div className="post-sidebar-badge" style={{
         display: "inline-block", fontSize: 10.5, fontWeight: 700,
         color: "#fff", background: badge.color,
         borderRadius: 4, padding: "3px 12px", marginBottom: 10, letterSpacing: 0.5,
@@ -254,7 +257,7 @@ function PostAuthorSidebar({
         {badge.label.toUpperCase()}
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+      <div className="post-sidebar-stats" style={{ display: "flex", flexDirection: "column", gap: 5 }}>
         <StatRow label="REP" value={rep} />
         <StatRow label="LIKES" value={likesGiven} />
         <StatRow label="POSTS" value={postsCount} />
@@ -1008,7 +1011,7 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
         {/* ── OP POST CARD ── */}
         {showOP && (
           <div style={{ background: "#0a1520", border: "1px solid #1a2535", borderRadius: 10, marginBottom: 14, padding: 18 }}>
-            <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
+            <div className="post-row" style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
               <PostAuthorSidebar
                 username={thread.username}
                 avatarUrl={thread.avatar_url}
@@ -1104,7 +1107,7 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
               background: "#0a1520", border: "1px solid #1a2535", borderRadius: 10,
               marginBottom: 12, padding: 18,
             }}>
-              <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
+              <div className="post-row" style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
                 <PostAuthorSidebar
                   username={reply.username}
                   avatarUrl={reply.avatar_url}
@@ -1492,6 +1495,37 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
 
         @media (max-width: 640px) {
           .rte-content .link-card { padding: 12px 14px; }
+        }
+
+        /* ── Mobile: stop the sidebar from squeezing post content ── */
+        @media (max-width: 640px) {
+          .post-row {
+            flex-direction: column;
+          }
+          .post-sidebar {
+            width: 100% !important;
+            flex-direction: row !important;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 8px;
+          }
+          .post-sidebar-name-block {
+            flex: 1;
+            min-width: 0;
+          }
+          .post-sidebar-avatar {
+            width: 44px !important;
+            height: 44px !important;
+            margin: 0 !important;
+            order: -1;
+          }
+          .post-sidebar-badge {
+            margin: 0 !important;
+          }
+          .post-sidebar-stats {
+            display: none;
+          }
         }
       `}</style>
 

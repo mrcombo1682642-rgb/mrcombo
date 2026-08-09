@@ -64,7 +64,7 @@ export default function CreateThreadModal({
   const [error, setError] = useState("");
 
   // Post options
-  const [includeSignature, setIncludeSignature] = useState(true);
+  const [includeSignature, setIncludeSignature] = useState(false);
   const [disableSmilies, setDisableSmilies] = useState(false);
   const [subscriptionType, setSubscriptionType] = useState("none");
 
@@ -101,7 +101,7 @@ export default function CreateThreadModal({
       setTitle("");
       setPrefix("No Prefix");
       setError("");
-      setIncludeSignature(true);
+      setIncludeSignature(false);
       setDisableSmilies(false);
       setSubscriptionType("none");
       setShowPoll(false);
@@ -544,10 +544,11 @@ export default function CreateThreadModal({
                 onClick={openHiddenDialog}
               />
               {showHiddenDialog && (
-                <div style={{
+                <div className="hlb-insert-dialog" style={{
                   position: "absolute", top: "100%", left: 0, marginTop: 4,
                   background: "#0d1c28", border: "1px solid #1a2535", borderRadius: 8,
-                  padding: 14, zIndex: 20, width: 280,
+                  padding: 14, zIndex: 20, width: 280, maxWidth: "calc(100vw - 64px)",
+                  boxSizing: "border-box",
                   boxShadow: "0 12px 28px rgba(0,0,0,0.5)",
                 }}>
                   <div style={{ fontSize: 12, fontWeight: 700, color: "#f0a500", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
@@ -815,6 +816,11 @@ export default function CreateThreadModal({
           }
           .ctm-title-row {
             flex-direction: column;
+          }
+          .hlb-insert-dialog {
+            left: 50% !important;
+            transform: translateX(-50%);
+            width: calc(100vw - 56px) !important;
           }
         }
       `}</style>

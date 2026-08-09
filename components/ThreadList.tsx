@@ -6,11 +6,11 @@ import { stripHiddenBlocks } from "@/lib/stripHiddenBlocks";
 
 interface ThreadListProps {
   threads: ThreadListItem[];
-  currentUserId: string | null;
-  currentUserRole: string | null;
-  likedThreadIds: Set<string>;
-  onToggleLike: (e: React.MouseEvent, threadId: string) => Promise<void>;
-  onDeleteThread: (e: React.MouseEvent, threadId: string) => Promise<void>;
+  currentUserId?: string | null;
+  currentUserRole?: string | null;
+  likedThreadIds?: Set<string>;
+  onToggleLike?: (e: React.MouseEvent, threadId: string) => Promise<void>;
+  onDeleteThread?: (e: React.MouseEvent, threadId: string) => Promise<void>;
 }
 
 function timeAgo(dateStr: string) {
@@ -27,9 +27,9 @@ function timeAgo(dateStr: string) {
 
 export default function ThreadList({
   threads,
-  currentUserId,
-  currentUserRole,
-  likedThreadIds,
+  currentUserId = null,
+  currentUserRole = null,
+  likedThreadIds = new Set(),
   onToggleLike,
   onDeleteThread,
 }: ThreadListProps) {
@@ -222,7 +222,7 @@ export default function ThreadList({
 
                 <button
                   type="button"
-                  onClick={(e) => onToggleLike(e, thread.id)}
+                  onClick={(e) => onToggleLike?.(e, thread.id)}
                   style={{
                     background: "transparent",
                     border: "none",
@@ -239,7 +239,7 @@ export default function ThreadList({
                 {canDelete && (
                   <button
                     type="button"
-                    onClick={(e) => onDeleteThread(e, thread.id)}
+                    onClick={(e) => onDeleteThread?.(e, thread.id)}
                     style={{
                       background: "rgba(239,68,68,0.1)",
                       border: "1px solid rgba(239,68,68,0.3)",

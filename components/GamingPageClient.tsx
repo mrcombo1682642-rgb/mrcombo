@@ -23,7 +23,9 @@ export default function GamingPageClient({ subcategory }: { subcategory: string 
   const [threads, setThreads] = useState<GameThread[]>([]);
   const [loading, setLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [currentUserRole, setCurrentUserRole] = useState<string | null>(null);
   const [user, setUser] = useState<any>(null);
+  const [likedThreadIds, setLikedThreadIds] = useState<Set<string>>(new Set());
   const [modalOpen, setModalOpen] = useState(false);
 
   const game = GAME_INFO[subcategory] || {
@@ -39,7 +41,15 @@ export default function GamingPageClient({ subcategory }: { subcategory: string 
         setUser(userData.user);
         const { data: profile } = await supabase
           .from("profiles").select("role").eq("id", uid).single();
-        if (profile?.role === "admin") setIsAdmin(true);
+        const role = profile?.role || "member";
+        setCurrentUserRole(role);
+        if (role === "admin") setIsAdmin(true);
+
+        const { data: likeRows } = await supabase
+          .from("thread_likes")
+          .select("thread_id")
+          .eq("user_id", uid);
+        if (likeRows) setLikedThreadIds(new Set(likeRows.map(r => r.thread_id)));
       }
     }
     init();
@@ -54,6 +64,42 @@ export default function GamingPageClient({ subcategory }: { subcategory: string 
     });
     if (!error) setThreads(data || []);
     setLoading(false);
+  }
+
+  async function handleToggleLike(e: React.MouseEvent, threadId: string) {
+    e.stopPropagation();
+    if (!user) return;
+
+    const isLiked = likedThreadIds.has(threadId);
+
+    if (isLiked) {
+      await supabase.from("thread_likes").delete()
+        .eq("thread_id", threadId).eq("user_id", user.id);
+      setLikedThreadIds(prev => {
+        const s = new Set(prev);
+        s.delete(threadId);
+        return s;
+      });
+      setThreads(prev => prev.map(t =>
+        t.id === threadId ? { ...t, likes_count: Math.max(0, (t.likes_count || 0) - 1) } : t
+      ));
+    } else {
+      await supabase.from("thread_likes").insert({ thread_id: threadId, user_id: user.id });
+      setLikedThreadIds(prev => new Set(prev).add(threadId));
+      setThreads(prev => prev.map(t =>
+        t.id === threadId ? { ...t, likes_count: (t.likes_count || 0) + 1 } : t
+      ));
+    }
+  }
+
+  async function handleDeleteThread(e: React.MouseEvent, threadId: string) {
+    e.stopPropagation();
+    if (!confirm("Delete this thread permanently? This cannot be undone.")) return;
+
+    const { error } = await supabase.from("threads").delete().eq("id", threadId);
+    if (!error) {
+      setThreads(prev => prev.filter(t => t.id !== threadId));
+    }
   }
 
   return (
@@ -153,7 +199,14 @@ export default function GamingPageClient({ subcategory }: { subcategory: string 
                 Loading threads...
               </div>
             ) : (
-              <ThreadList threads={threads} />
+              <ThreadList
+                threads={threads}
+                currentUserId={user?.id ?? null}
+                currentUserRole={currentUserRole}
+                likedThreadIds={likedThreadIds}
+                onToggleLike={handleToggleLike}
+                onDeleteThread={handleDeleteThread}
+              />
             )}
           </div>
         </div>
