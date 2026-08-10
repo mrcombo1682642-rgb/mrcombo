@@ -310,11 +310,11 @@ function PostActionsRow({
   disabled: boolean;
 }) {
   return (
-    <div style={{
+    <div className="post-actions-row" style={{
       display: "flex", justifyContent: "space-between", alignItems: "center",
       marginTop: 16, flexWrap: "wrap", gap: 10,
     }}>
-      <div style={{ display: "flex", gap: 8 }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         {showReport && (
           <button onClick={onReport} style={pillBtn}>🚩 Report</button>
         )}
@@ -326,7 +326,7 @@ function PostActionsRow({
         )}
       </div>
 
-      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
         <button
           onClick={onLike}
           disabled={disabled}
@@ -449,10 +449,16 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
   const imageInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
 
+  // Guards against the view count being incremented twice for the same
+  // thread — React 18 Strict Mode (dev only) intentionally double-invokes
+  // effects, which would otherwise call increment_thread_views() twice.
+  const viewIncrementedForRef = useRef<string | null>(null);
+
   useEffect(() => {
     setPage(1);
     loadThread();
     loadCurrentUser();
+    incrementViewCountOnce();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [threadId]);
 
@@ -528,13 +534,33 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
         thread_id_input: threadId,
       });
       setReplies((replyData as Reply[]) || []);
-
-      supabase.rpc("increment_thread_views", { thread_id_input: threadId });
     } catch (err) {
       console.error("Network error loading thread:", err);
     } finally {
       setLoading(false);
     }
+  }
+
+  // Increments the view count exactly once per thread visit — guarded by
+  // a ref so it survives React Strict Mode's double effect-invocation in
+  // dev, and is only ever called from the mount effect (never from the
+  // post-reply reload), so replying doesn't inflate the view count.
+  function incrementViewCountOnce() {
+    if (viewIncrementedForRef.current === threadId) return;
+    viewIncrementedForRef.current = threadId;
+
+    supabase
+      .rpc("increment_thread_views", { thread_id_input: threadId })
+      .then(({ error }) => {
+        if (error) {
+          console.error("View count increment failed:", error.message);
+          viewIncrementedForRef.current = null; // allow retry on next mount
+          return;
+        }
+        setThread((prev) =>
+          prev ? { ...prev, views_count: (prev.views_count || 0) + 1 } : prev
+        );
+      });
   }
 
   useEffect(() => {
@@ -911,28 +937,28 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
     <div style={{ minHeight: "100vh", background: "#050a0f", color: "#e7e7e7", display: "flex", flexDirection: "column" }}>
       <Navbar />
 
-      <div style={{ maxWidth: 900, margin: "0 auto", padding: "80px 16px 60px", width: "100%", flex: 1, boxSizing: "border-box" }}>
+      <div className="thread-page-container" style={{ maxWidth: 900, margin: "0 auto", padding: "80px 16px 60px", width: "100%", flex: 1, boxSizing: "border-box" }}>
 
         {/* Breadcrumb */}
-        <div style={{ fontSize: 13, color: "#4a7a94", marginBottom: 16, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+        <div className="thread-breadcrumb" style={{ fontSize: 13, color: "#4a7a94", marginBottom: 16, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
           <span style={{ cursor: "pointer" }} onClick={() => router.push("/")}>Home</span>
           <span>›</span>
           <span style={{ cursor: "pointer" }} onClick={() => router.push(`/forum/${thread.category}`)}>
             {thread.category}
           </span>
           <span>›</span>
-          <span style={{ color: "#6cc6ff", fontWeight: 600 }}>{thread.title}</span>
+          <span className="thread-breadcrumb-title" style={{ color: "#6cc6ff", fontWeight: 600 }}>{thread.title}</span>
         </div>
 
         <PremiumOfferBanner context="thread" />
 
         {/* ── HEADER: icon + title + byline, Reply button + menu ── */}
-        <div style={{
+        <div className="thread-header-row" style={{
           display: "flex", justifyContent: "space-between", alignItems: "flex-start",
           gap: 14, flexWrap: "wrap", marginBottom: 14,
         }}>
-          <div style={{ display: "flex", gap: 14, alignItems: "flex-start", minWidth: 0 }}>
-            <div style={{
+          <div className="thread-header-left" style={{ display: "flex", gap: 14, alignItems: "flex-start", minWidth: 0 }}>
+            <div className="thread-header-icon" style={{
               width: 44, height: 44, borderRadius: 10, flexShrink: 0,
               background: thread.locked ? "#3a2a10" : "#132030",
               display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20,
@@ -940,7 +966,7 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
               {thread.locked ? "🔒" : "📄"}
             </div>
             <div style={{ minWidth: 0 }}>
-              <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: "#fff", wordBreak: "break-word" }}>
+              <h1 className="thread-header-title" style={{ margin: 0, fontSize: 22, fontWeight: 800, color: "#fff", wordBreak: "break-word" }}>
                 {thread.pinned && <span style={{ fontSize: 13, color: "#f0a500", marginRight: 6 }}>📌</span>}
                 {thread.title}
               </h1>
@@ -960,8 +986,9 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
             </div>
           </div>
 
-          <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
+          <div className="thread-header-actions" style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
             <button
+              className="thread-reply-btn"
               onClick={() => document.getElementById("reply-box")?.scrollIntoView({ behavior: "smooth" })}
               style={{
                 fontSize: 13, fontWeight: 700, color: "#fff", background: "#6c63ff",
@@ -997,20 +1024,20 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
         </div>
 
         {/* ── STATS ROW ── */}
-        <div style={{ display: "flex", gap: 20, flexWrap: "wrap", color: "#9ab0bf", fontSize: 13, marginBottom: 14 }}>
+        <div className="thread-stats-row" style={{ display: "flex", gap: 20, flexWrap: "wrap", color: "#9ab0bf", fontSize: 13, marginBottom: 14 }}>
           <span>👁️ <b style={{ color: "#c8dde8" }}>{thread.views_count}</b> Views</span>
           <span>💬 <b style={{ color: "#c8dde8" }}>{replies.length}</b> Replies</span>
           <span>🕐 <b style={{ color: "#c8dde8" }}>{timeAgo(lastReplyTime)}</b> Last Reply</span>
         </div>
 
         {/* ── PAGINATION ── */}
-        <div style={{ marginBottom: 14 }}>
+        <div style={{ marginBottom: 14, overflowX: "auto" }}>
           <PaginationBar page={safePage} totalPages={totalPages} onChange={setPage} />
         </div>
 
         {/* ── OP POST CARD ── */}
         {showOP && (
-          <div style={{ background: "#0a1520", border: "1px solid #1a2535", borderRadius: 10, marginBottom: 14, padding: 18 }}>
+          <div className="post-card" style={{ background: "#0a1520", border: "1px solid #1a2535", borderRadius: 10, marginBottom: 14, padding: 18 }}>
             <div className="post-row" style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
               <PostAuthorSidebar
                 username={thread.username}
@@ -1103,7 +1130,7 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
           const replyOnline = isOnline(reply.author_last_seen);
 
           return (
-            <div key={reply.id} style={{
+            <div key={reply.id} className="post-card" style={{
               background: "#0a1520", border: "1px solid #1a2535", borderRadius: 10,
               marginBottom: 12, padding: 18,
             }}>
@@ -1180,13 +1207,13 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
         })}
 
         {totalPages > 1 && (
-          <div style={{ display: "flex", justifyContent: "center", marginBottom: 20 }}>
+          <div style={{ display: "flex", justifyContent: "center", marginBottom: 20, overflowX: "auto" }}>
             <PaginationBar page={safePage} totalPages={totalPages} onChange={setPage} />
           </div>
         )}
 
         {/* ── QUICK REPLY ── */}
-        <div id="reply-box" style={{ background: "#0a1520", border: "1px solid #1a2535", borderRadius: 10, padding: 20, marginTop: 18 }}>
+        <div id="reply-box" className="quick-reply-card" style={{ background: "#0a1520", border: "1px solid #1a2535", borderRadius: 10, padding: 20, marginTop: 18 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 16 }}>
             <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>Quick Reply</h2>
             {currentUserId && <DailyLimitBadge />}
@@ -1213,7 +1240,7 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
                 </div>
 
                 {showEmojiPicker && (
-                  <div ref={emojiPickerRef} style={{ position: "absolute", bottom: 50, left: 8, zIndex: 9999 }}>
+                  <div ref={emojiPickerRef} className="emoji-picker-wrap" style={{ position: "absolute", bottom: 50, left: 8, zIndex: 9999 }}>
                     <EmojiPicker onEmojiClick={handleEmojiClick} theme={Theme.DARK} width={320} height={400} />
                   </div>
                 )}
@@ -1242,7 +1269,7 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
               {errorMsg && <div style={{ color: "#ff6b6b", fontSize: 13, marginTop: 8 }}>{errorMsg}</div>}
 
               <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
-                <button onClick={handleReply} disabled={!canPost} style={{
+                <button onClick={handleReply} disabled={!canPost} className="quick-reply-submit" style={{
                   background: canPost ? "#6c63ff" : "#3a3760", border: "none",
                   color: "#fff", padding: "10px 22px", borderRadius: 8,
                   cursor: canPost ? "pointer" : "not-allowed", fontWeight: 700, fontSize: 13.5,
@@ -1525,6 +1552,89 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
           }
           .post-sidebar-stats {
             display: none;
+          }
+        }
+
+        /* ── Mobile: overall page layout, header, stats, cards, reply box ── */
+        @media (max-width: 640px) {
+          .thread-page-container {
+            padding: 72px 12px 40px !important;
+          }
+
+          .thread-breadcrumb {
+            font-size: 11.5px !important;
+            gap: 4px !important;
+          }
+          .thread-breadcrumb-title {
+            max-width: 100%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+
+          .thread-header-row {
+            flex-direction: column !important;
+            align-items: stretch !important;
+            gap: 12px !important;
+          }
+          .thread-header-left {
+            gap: 10px !important;
+          }
+          .thread-header-icon {
+            width: 38px !important;
+            height: 38px !important;
+            font-size: 17px !important;
+            border-radius: 8px !important;
+          }
+          .thread-header-title {
+            font-size: 18px !important;
+            line-height: 1.3 !important;
+          }
+          .thread-header-actions {
+            width: 100%;
+          }
+          .thread-reply-btn {
+            flex: 1;
+            padding: 11px 20px !important;
+          }
+
+          .thread-stats-row {
+            gap: 12px !important;
+            font-size: 12px !important;
+          }
+
+          .post-card {
+            padding: 14px !important;
+            border-radius: 8px !important;
+          }
+
+          .post-actions-row {
+            justify-content: flex-start !important;
+            gap: 8px !important;
+          }
+          .post-actions-row > div {
+            width: 100%;
+            justify-content: flex-start !important;
+          }
+
+          .quick-reply-card {
+            padding: 14px !important;
+          }
+          .quick-reply-submit {
+            width: 100%;
+            justify-content: center !important;
+          }
+
+          .emoji-picker-wrap {
+            left: -8px !important;
+            transform: scale(0.9);
+            transform-origin: bottom left;
+          }
+        }
+
+        @media (max-width: 400px) {
+          .thread-header-title {
+            font-size: 16.5px !important;
           }
         }
       `}</style>

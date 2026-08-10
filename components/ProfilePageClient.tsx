@@ -121,6 +121,8 @@ export default function ProfilePageClient({ targetUsername }: { targetUsername: 
   // Image upload
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [uploadingCover, setUploadingCover] = useState(false);
+  const [avatarUploadError, setAvatarUploadError] = useState<string | null>(null);
+  const [coverUploadError, setCoverUploadError] = useState<string | null>(null);
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const coverInputRef = useRef<HTMLInputElement>(null);
 
@@ -290,16 +292,51 @@ export default function ProfilePageClient({ targetUsername }: { targetUsername: 
 
   async function uploadImage(file: File, type: "avatar" | "cover") {
     if (!currentUserId || !profile) return;
+
     const setUploading = type === "avatar" ? setUploadingAvatar : setUploadingCover;
+    const setUploadErr = type === "avatar" ? setAvatarUploadError : setCoverUploadError;
+
     setUploading(true);
+    setUploadErr(null);
+
     const bucket = type === "avatar" ? "avatars" : "covers";
     const ext = file.name.split(".").pop();
     const path = `${currentUserId}/${type}-${Date.now()}.${ext}`;
+
+    // 1) Upload the file to storage
     const { error: uploadError } = await supabase.storage.from(bucket).upload(path, file, { upsert: true });
-    if (uploadError) { setUploading(false); return; }
+    if (uploadError) {
+      console.error(`${type} upload failed:`, uploadError.message);
+      setUploadErr(
+        `Upload failed: ${uploadError.message}. Check that the "${bucket}" storage bucket exists in Supabase.`
+      );
+      setUploading(false);
+      return;
+    }
+
+    // 2) Get its public URL
     const { data: urlData } = supabase.storage.from(bucket).getPublicUrl(path);
+    if (!urlData?.publicUrl) {
+      setUploadErr("Uploaded, but could not generate a public URL. Is the bucket set to public?");
+      setUploading(false);
+      return;
+    }
+
+    // 3) Save the URL onto the profile row
     const column = type === "avatar" ? "avatar_url" : "cover_url";
-    await supabase.from("profiles").update({ [column]: urlData.publicUrl }).eq("id", currentUserId);
+    const { error: updateError } = await supabase
+      .from("profiles")
+      .update({ [column]: urlData.publicUrl })
+      .eq("id", currentUserId);
+
+    if (updateError) {
+      console.error(`Saving ${column} to profile failed:`, updateError.message);
+      setUploadErr(`Image uploaded but could not save to your profile: ${updateError.message}`);
+      setUploading(false);
+      return;
+    }
+
+    // Only update local UI state once the DB write actually succeeded
     setProfile(prev => prev ? { ...prev, [column]: urlData.publicUrl } as Profile : prev);
     setUploading(false);
   }
@@ -526,6 +563,15 @@ const isSubscriber = SUBSCRIPTION_ROLES.includes(normalizedRole) || normalizedRo
             onChange={e => e.target.files?.[0] && uploadImage(e.target.files[0], "cover")} />
         </div>
 
+        {isOwner && coverUploadError && (
+          <div style={{
+            background: "#1a0000", border: "1px solid #ef444440", borderRadius: 8,
+            padding: "10px 14px", color: "#ff8080", fontSize: 12.5, marginTop: 8,
+          }}>
+            ⚠️ {coverUploadError}
+          </div>
+        )}
+
         {/* PROFILE HEADER */}
         <div style={{ background: "#0a1520", border: "1px solid #1a2535", borderTop: "none", padding: "0 24px 20px", display: "flex", alignItems: "flex-end", gap: 18, flexWrap: "wrap", position: "relative" }}>
           <div style={{ marginTop: -50, position: "relative", flexShrink: 0 }}>
@@ -608,6 +654,15 @@ const isSubscriber = SUBSCRIPTION_ROLES.includes(normalizedRole) || normalizedRo
             )}
           </div>
         </div>
+
+        {isOwner && avatarUploadError && (
+          <div style={{
+            background: "#1a0000", border: "1px solid #ef444440", borderRadius: 8,
+            padding: "10px 14px", color: "#ff8080", fontSize: 12.5, marginTop: 10,
+          }}>
+            ⚠️ {avatarUploadError}
+          </div>
+        )}
 
         {/* REPUTATION + LIKES */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 1, background: "#1a2535" }}>
@@ -846,11 +901,17 @@ const isSubscriber = SUBSCRIPTION_ROLES.includes(normalizedRole) || normalizedRo
                     <button onClick={() => avatarInputRef.current?.click()} style={{ background: "#0d2030", border: "1px solid #1a2535", borderRadius: 6, padding: "9px 16px", color: "#00b4d8", fontSize: 13, cursor: "pointer" }}>
                       {uploadingAvatar ? "Uploading..." : "📷 Change Avatar"}
                     </button>
+                    {avatarUploadError && (
+                      <div style={{ fontSize: 11.5, color: "#ff8080", marginTop: 6 }}>⚠️ {avatarUploadError}</div>
+                    )}
                   </Field>
                   <Field label="COVER PHOTO">
                     <button onClick={() => coverInputRef.current?.click()} style={{ background: "#0d2030", border: "1px solid #1a2535", borderRadius: 6, padding: "9px 16px", color: "#00b4d8", fontSize: 13, cursor: "pointer" }}>
                       {uploadingCover ? "Uploading..." : "🖼️ Change Cover"}
                     </button>
+                    {coverUploadError && (
+                      <div style={{ fontSize: 11.5, color: "#ff8080", marginTop: 6 }}>⚠️ {coverUploadError}</div>
+                    )}
                   </Field>
                   {saveMsg && <div style={{ fontSize: 12, color: saveMsg.includes("❌") ? "#ef4444" : "#22c55e" }}>{saveMsg}</div>}
                   <button onClick={handleSaveProfile} disabled={saving} style={{ background: "#6c63ff", border: "none", borderRadius: 8, padding: "12px 0", color: "#fff", fontSize: 14, fontWeight: 700, cursor: saving ? "not-allowed" : "pointer", opacity: saving ? 0.6 : 1 }}>
