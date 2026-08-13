@@ -175,11 +175,23 @@ export default function ProfilePageClient({ targetUsername }: { targetUsername: 
       const adminViewer = viewerRole === "admin";
       setIsAdminViewer(adminViewer);
 
-      await supabase.rpc("track_profile_visit", {
+      const { error: visitError } = await supabase.rpc("track_profile_visit", {
         target_user_id: profileData.id,
         visitor_id_input: uid,
         visitor_username_input: visitorUsername,
       });
+      if (visitError) {
+        console.error("track_profile_visit failed:", visitError.message);
+      } else {
+        // The RPC just bumped profiles.profile_views — profileData above
+        // was fetched before that, so pull the fresh count so the header
+        // shows this visit immediately instead of lagging by one.
+        const { data: freshViews } = await supabase
+          .from("profiles").select("profile_views").eq("id", profileData.id).single();
+        if (freshViews) {
+          setProfile(prev => prev ? { ...prev, profile_views: freshViews.profile_views } as Profile : prev);
+        }
+      }
 
       // Stats — now returns posts_count, threads_count, likes_count,
       // reported_posts, and vouches_count (all live from real tables).
@@ -207,10 +219,13 @@ export default function ProfilePageClient({ targetUsername }: { targetUsername: 
       }
 
       // Visitors
-      const { data: visitData } = await supabase
+      const { data: visitData, error: visitorsError } = await supabase
         .from("profile_visits").select("visitor_username, visited_at")
         .eq("profile_user_id", profileData.id)
         .order("visited_at", { ascending: false }).limit(5);
+      if (visitorsError) {
+        console.error("Loading visitors failed:", visitorsError.message);
+      }
       if (visitData) setVisitors(visitData as ProfileVisitor[]);
 
       // Awards — real earned awards, public RPC, works for any visitor

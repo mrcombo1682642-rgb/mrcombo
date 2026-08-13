@@ -211,7 +211,11 @@ export default function HomePage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [messageInput, setMessageInput] = useState("");
   const [sending, setSending] = useState(false);
-  const msgEndRef = useRef<HTMLDivElement>(null);
+  // Scrolls ONLY the chat messages box itself (never the page/window) —
+  // we set scrollTop directly on this container instead of using
+  // scrollIntoView(), which used to drag the whole page down on load
+  // and on every new message.
+  const chatMsgsRef = useRef<HTMLDivElement>(null);
 
   // Top chatters & banned (live)
   const [topChatters, setTopChatters] = useState<any[]>([]);
@@ -240,13 +244,6 @@ export default function HomePage() {
 
   // ── LIVE online-users-by-role (replaces old hardcoded ONLINE_ROLES array) ──
   const [onlineRoles, setOnlineRoles] = useState<{ role: string; cnt: number }[]>([]);
-
-  // Admin announcement form
-  const [announceFormOpen, setAnnounceFormOpen] = useState(false);
-  const [announceIcon, setAnnounceIcon] = useState("📢");
-  const [announceTitle, setAnnounceTitle] = useState("");
-  const [announceLink, setAnnounceLink] = useState("");
-  const [announceSaving, setAnnounceSaving] = useState(false);
 
   // ── Staff management (admin) ──
   const [staffList, setStaffList] = useState<any[]>([]); // full roster, for admin panel
@@ -290,14 +287,49 @@ export default function HomePage() {
     supabase.from("banned_users").select("*").order("created_at", { ascending: false }).then(({ data }) => setBannedUsers(data || []));
   }, []);
 
-  // ── Load sidebar / stats / online-roles / staff data ──
-  async function loadSidebarData() {
-    const { data: ann } = await supabase
-      .from("site_announcements")
-      .select("*")
+  // ── Announcements — now sourced directly from the real forum threads
+  // in the "Announcements" category (threads.category = 'announcements'),
+  // instead of a separate site_announcements table. This is what makes
+  // the home sidebar and the Forum → Announcements page the same data:
+  // whatever admin posts there shows up here automatically.
+  async function loadAnnouncementThreads() {
+    const { data: threadsData } = await supabase
+      .from("threads")
+      .select("id, title, created_at, user_id")
+      .eq("category", "announcements")
       .order("created_at", { ascending: false })
       .limit(6);
-    setAnnouncements(ann || []);
+
+    if (!threadsData || threadsData.length === 0) {
+      setAnnouncements([]);
+      return;
+    }
+
+    const userIds = Array.from(new Set(threadsData.map(t => t.user_id).filter(Boolean))) as string[];
+    let usernameMap: Record<string, string> = {};
+    if (userIds.length > 0) {
+      const { data: profilesData } = await supabase
+        .from("profiles")
+        .select("id, username")
+        .in("id", userIds);
+      (profilesData || []).forEach((p: any) => { usernameMap[p.id] = p.username; });
+    }
+
+    setAnnouncements(
+      threadsData.map(t => ({
+        id: t.id,
+        icon: "📢",
+        title: t.title,
+        link: `/thread/${t.id}`,
+        posted_by: t.user_id ? (usernameMap[t.user_id] || "Unknown") : "Unknown",
+        created_at: t.created_at,
+      }))
+    );
+  }
+
+  // ── Load sidebar / stats / online-roles / staff data ──
+  async function loadSidebarData() {
+    await loadAnnouncementThreads();
 
     const { data: act } = await supabase.rpc("get_latest_threads", { limit_count: 8 });
     setActivities(act || []);
@@ -329,33 +361,14 @@ export default function HomePage() {
     return () => clearInterval(interval);
   }, []);
 
-  async function handleAddAnnouncement() {
-    if (!announceTitle.trim()) return;
-    setAnnounceSaving(true);
-    const { data: myProfile } = user
-      ? await supabase.from("profiles").select("username").eq("id", user.id).single()
-      : { data: null };
-
-    await supabase.from("site_announcements").insert({
-      icon: announceIcon.trim() || "📢",
-      title: announceTitle.trim(),
-      link: announceLink.trim() || null,
-      posted_by: myProfile?.username || "Admin",
-    });
-
-    setAnnounceTitle("");
-    setAnnounceLink("");
-    setAnnounceIcon("📢");
-    setAnnounceFormOpen(false);
-    setAnnounceSaving(false);
-
-    const { data: ann } = await supabase.from("site_announcements").select("*").order("created_at", { ascending: false }).limit(6);
-    setAnnouncements(ann || []);
-  }
-
-  async function handleDeleteAnnouncement(id: string) {
-    await supabase.from("site_announcements").delete().eq("id", id);
-    setAnnouncements(prev => prev.filter(a => a.id !== id));
+  // Admin clicks "+ Post" on the home sidebar — instead of opening an
+  // inline form that wrote to a separate table, this now sends them to
+  // the real Forum → Announcements category, where they create a normal
+  // thread. That thread is then what shows up here (see
+  // loadAnnouncementThreads above), so there's only ever one place an
+  // announcement actually gets created.
+  function goToPostAnnouncement() {
+    router.push("/forum/announcements");
   }
 
   // ── Staff: add / remove (admin only — RLS also enforces this server-side) ──
@@ -421,8 +434,13 @@ export default function HomePage() {
     return () => { isActive = false; supabase.removeChannel(channel); };
   }, [chatTab]);
 
+  // Scroll only the chat box to its bottom when messages change — this
+  // never touches the page/window scroll position, so opening the home
+  // page or sending a chat message no longer jumps the whole page.
   useEffect(() => {
-    msgEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (chatMsgsRef.current) {
+      chatMsgsRef.current.scrollTop = chatMsgsRef.current.scrollHeight;
+    }
   }, [messages]);
 
   // Send message
@@ -866,7 +884,7 @@ export default function HomePage() {
                   </div>
                 )}
 
-                <div className="hp-cmsgs">
+                <div className="hp-cmsgs" ref={chatMsgsRef}>
                   {chatTab === "General" ? (
                     <>
                       {messages.length === 0 && (
@@ -894,7 +912,6 @@ export default function HomePage() {
                   ) : (
                     <ReadOnlyTabContent tab={chatTab} />
                   )}
-                  <div ref={msgEndRef} />
                 </div>
 
                 {/* Input — sirf General tab mein */}
@@ -1009,30 +1026,18 @@ export default function HomePage() {
             {/* ── SIDEBAR (desktop always, mobile via toggle) ── */}
             <div className={`hp-sidebar ${mobileExtrasOpen ? "mobile-open" : ""}`}>
 
-              {/* Announcements — admin editable */}
+              {/* Announcements — now the same data as Forum → Announcements.
+                  "+ Post" just sends admin there to create a real thread;
+                  there's no separate place announcements get created. */}
               <div className="side-box">
                 <div className="side-box-hdr">
                   <span>📣 Announcements</span>
                   {isAdmin && (
-                    <button className="side-box-hdr-add" onClick={() => setAnnounceFormOpen(v => !v)}>
-                      {announceFormOpen ? "✕ Close" : "+ Post"}
+                    <button className="side-box-hdr-add" onClick={goToPostAnnouncement}>
+                      + Post
                     </button>
                   )}
                 </div>
-                {isAdmin && announceFormOpen && (
-                  <div className="side-form">
-                    <input className="side-input" placeholder="Icon (emoji, optional)" value={announceIcon} onChange={e => setAnnounceIcon(e.target.value)} />
-                    <input className="side-input" placeholder="Announcement title" value={announceTitle} onChange={e => setAnnounceTitle(e.target.value)} />
-                    <input className="side-input" placeholder="Link (optional)" value={announceLink} onChange={e => setAnnounceLink(e.target.value)} />
-                    <button
-                      onClick={handleAddAnnouncement}
-                      disabled={announceSaving || !announceTitle.trim()}
-                      style={{ background: "#6c63ff", border: "none", borderRadius: 6, padding: "8px 0", color: "#fff", fontSize: 12.5, fontWeight: 700, cursor: "pointer", opacity: announceSaving || !announceTitle.trim() ? 0.5 : 1 }}
-                    >
-                      {announceSaving ? "Posting..." : "Post Announcement"}
-                    </button>
-                  </div>
-                )}
                 <div className="side-box-body">
                   {announcements.length === 0 ? (
                     <div className="side-empty">No announcements yet.</div>
@@ -1040,16 +1045,9 @@ export default function HomePage() {
                     <div key={a.id} className="side-item">
                       <span className="side-icon">{a.icon}</span>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        {a.link ? (
-                          <a href={a.link} className="side-title">{a.title}</a>
-                        ) : (
-                          <span className="side-title">{a.title}</span>
-                        )}
+                        <a href={a.link} className="side-title">{a.title}</a>
                         <div className="side-meta">By {a.posted_by || "Admin"} · {timeAgo(a.created_at)}</div>
                       </div>
-                      {isAdmin && (
-                        <button className="side-del" onClick={() => handleDeleteAnnouncement(a.id)}>✕</button>
-                      )}
                     </div>
                   ))}
                 </div>
