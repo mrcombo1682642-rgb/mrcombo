@@ -252,6 +252,10 @@ export default function HomePage() {
   const [staffRoleInput, setStaffRoleInput] = useState("Moderator");
   const [staffSaving, setStaffSaving] = useState(false);
 
+  // ── Pending username-change requests (admin only) ──
+  const [pendingUsernameReqs, setPendingUsernameReqs] = useState<any[]>([]);
+  const [reviewingReqId, setReviewingReqId] = useState<string | null>(null);
+
   const pinned = PINNED[chatTab];
 
   // Auth check
@@ -370,6 +374,45 @@ export default function HomePage() {
   function goToPostAnnouncement() {
     router.push("/forum/announcements");
   }
+
+  // ── Username change requests: admin sees everyone's pending requests
+  // right here on the home sidebar and can approve / reject them. Both
+  // the list and the review go through server-side RPCs that re-check
+  // the caller is an admin, so non-admins can never read or act on them.
+  async function loadPendingUsernameRequests() {
+    const { data, error } = await supabase.rpc("get_pending_username_requests");
+    if (error) {
+      console.error("Loading username requests failed:", error.message);
+      return;
+    }
+    setPendingUsernameReqs(data || []);
+  }
+
+  async function handleReviewUsernameRequest(id: string, approve: boolean) {
+    setReviewingReqId(id);
+    const { error } = await supabase.rpc("review_username_request", {
+      request_id_input: id,
+      approve_input: approve,
+    });
+    if (error) {
+      alert(
+        error.message.includes("USERNAME_TAKEN")
+          ? "Ye username ab kisi aur ne le liya hai."
+          : error.message.includes("NOT_ADMIN")
+          ? "Sirf admin ye kar sakta hai."
+          : "Request process nahi ho saki: " + error.message
+      );
+    }
+    await loadPendingUsernameRequests();
+    setReviewingReqId(null);
+  }
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    loadPendingUsernameRequests();
+    const interval = setInterval(loadPendingUsernameRequests, 60000);
+    return () => clearInterval(interval);
+  }, [isAdmin]);
 
   // ── Staff: add / remove (admin only — RLS also enforces this server-side) ──
   async function handleAddStaff() {
@@ -1052,6 +1095,45 @@ export default function HomePage() {
                   ))}
                 </div>
               </div>
+
+              {/* Username Requests — admin only */}
+              {isAdmin && (
+                <div className="side-box">
+                  <div className="side-box-hdr">
+                    <span>✏️ Username Requests{pendingUsernameReqs.length > 0 ? ` (${pendingUsernameReqs.length})` : ""}</span>
+                  </div>
+                  <div className="side-box-body">
+                    {pendingUsernameReqs.length === 0 ? (
+                      <div className="side-empty">No pending requests.</div>
+                    ) : pendingUsernameReqs.map(r => (
+                      <div key={r.id} className="side-item" style={{ alignItems: "center" }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div className="side-title" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {r.current_username} → <b>{r.requested_username}</b>
+                          </div>
+                          <div className="side-meta">{timeAgo(r.created_at)}</div>
+                        </div>
+                        <button
+                          onClick={() => handleReviewUsernameRequest(r.id, true)}
+                          disabled={reviewingReqId === r.id}
+                          title="Approve"
+                          style={{ background: "#22c55e22", border: "1px solid #22c55e44", borderRadius: 6, padding: "5px 10px", color: "#22c55e", fontSize: 12, fontWeight: 700, cursor: "pointer", opacity: reviewingReqId === r.id ? 0.5 : 1 }}
+                        >
+                          ✓
+                        </button>
+                        <button
+                          onClick={() => handleReviewUsernameRequest(r.id, false)}
+                          disabled={reviewingReqId === r.id}
+                          title="Reject"
+                          style={{ background: "#ef444422", border: "1px solid #ef444444", borderRadius: 6, padding: "5px 10px", color: "#ef4444", fontSize: 12, fontWeight: 700, cursor: "pointer", opacity: reviewingReqId === r.id ? 0.5 : 1 }}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Latest Activities — live */}
               <div className="side-box">

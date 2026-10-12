@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import { useRouter } from "next/navigation";
 import type { ThreadListItem } from "@/lib/types";
 import { stripHiddenBlocks } from "@/lib/stripHiddenBlocks";
@@ -12,31 +11,6 @@ interface ThreadListProps {
   likedThreadIds?: Set<string>;
   onToggleLike?: (e: React.MouseEvent, threadId: string) => Promise<void>;
   onDeleteThread?: (e: React.MouseEvent, threadId: string) => Promise<void>;
-}
-
-const THREADS_PER_PAGE = 19;
-
-// Builds a compact page list like: 1  2  3  ...  10
-// (always shows first page, last page, current page ± 1 neighbor,
-// and collapses any gap bigger than that into a single "...").
-function getPageNumbers(current: number, total: number): (number | "...")[] {
-  if (total <= 1) return [1];
-
-  const keep = new Set<number>([1, total]);
-  for (let i = current - 1; i <= current + 1; i++) {
-    if (i > 1 && i < total) keep.add(i);
-  }
-  const sorted = Array.from(keep).sort((a, b) => a - b);
-
-  const result: (number | "...")[] = [];
-  let prev = 0;
-  for (const n of sorted) {
-    if (prev && n - prev === 2) result.push(prev + 1);
-    else if (prev && n - prev > 2) result.push("...");
-    result.push(n);
-    prev = n;
-  }
-  return result;
 }
 
 function timeAgo(dateStr: string) {
@@ -51,53 +25,12 @@ function timeAgo(dateStr: string) {
   return new Date(dateStr).toLocaleDateString();
 }
 
-// ── Pagination bar: Previous  1 2 3 ... 10  Next ──
-function ThreadPaginationBar({
-  page, totalPages, onChange,
-}: { page: number; totalPages: number; onChange: (p: number) => void }) {
-  if (totalPages <= 1) return null;
-  const pages = getPageNumbers(page, totalPages);
-
-  return (
-    <div className="thread-pagination-bar">
-      <button
-        type="button"
-        onClick={() => onChange(Math.max(1, page - 1))}
-        disabled={page === 1}
-        className="thread-pagination-nav"
-      >
-        ‹ Previous
-      </button>
-
-      <div className="thread-pagination-numbers">
-        {pages.map((p, i) =>
-          p === "..." ? (
-            <span key={`dots-${i}`} className="thread-pagination-dots">•••</span>
-          ) : (
-            <button
-              key={p}
-              type="button"
-              onClick={() => onChange(p)}
-              className={`thread-pagination-num${p === page ? " thread-pagination-num--active" : ""}`}
-            >
-              {p}
-            </button>
-          )
-        )}
-      </div>
-
-      <button
-        type="button"
-        onClick={() => onChange(Math.min(totalPages, page + 1))}
-        disabled={page === totalPages}
-        className="thread-pagination-nav thread-pagination-nav--next"
-      >
-        Next ›
-      </button>
-    </div>
-  );
-}
-
+// NOTE: This component intentionally does NOT paginate. It renders
+// whatever `threads` it is given, one page's worth at a time.
+// Pagination (page size, page state, the Prev/Next bar) lives in
+// SubcategoryPageClient.tsx — doing it here too caused the list to
+// be sliced twice (double pagination), which is why pages were
+// showing inconsistent thread counts before.
 export default function ThreadList({
   threads,
   currentUserId = null,
@@ -109,19 +42,6 @@ export default function ThreadList({
   const router = useRouter();
   const canDelete =
     currentUserRole === "admin" || currentUserRole === "moderator";
-
-  const [page, setPage] = useState(1);
-  const totalPages = Math.max(1, Math.ceil(threads.length / THREADS_PER_PAGE));
-  const safePage = Math.min(page, totalPages);
-  const pageStart = (safePage - 1) * THREADS_PER_PAGE;
-  const visibleThreads = threads.slice(pageStart, pageStart + THREADS_PER_PAGE);
-
-  function goToPage(p: number) {
-    setPage(p);
-    if (typeof window !== "undefined") {
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    }
-  }
 
   if (threads.length === 0) {
     return (
@@ -152,12 +72,8 @@ export default function ThreadList({
   return (
     <div className="thread-list-page-container" style={{ maxWidth: 900, margin: "0 auto", padding: "0 16px 60px", width: "100%", boxSizing: "border-box" }}>
 
-      <div className="thread-pagination-top">
-        <ThreadPaginationBar page={safePage} totalPages={totalPages} onChange={goToPage} />
-      </div>
-
       <div className="thread-list-wrap">
-        {visibleThreads.map((thread) => {
+        {threads.map((thread) => {
           // Strip hidden-link block markup out of the preview so the real
           // content is never leaked here — only a small badge shows that
           // this thread contains a hidden link. Full content (and the
@@ -284,121 +200,6 @@ export default function ThreadList({
         @media (max-width: 640px) {
           .thread-list-page-container {
             padding: 0 12px 40px !important;
-          }
-        }
-
-        /* ── Pagination bar (Previous  1 2 3 ... 10  Next) ── */
-        .thread-pagination-top {
-          display: flex;
-          justify-content: flex-start;
-          margin-bottom: 16px;
-        }
-
-        .thread-pagination-bar {
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-          background: #0a1520;
-          border: 1px solid #1a2535;
-          border-radius: 12px;
-          padding: 6px;
-          box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
-        }
-
-        .thread-pagination-nav {
-          display: inline-flex;
-          align-items: center;
-          gap: 5px;
-          background: #0d1c28;
-          border: 1px solid #1a2535;
-          border-radius: 8px;
-          color: #c8dde8;
-          font-size: 12px;
-          font-weight: 600;
-          padding: 7px 12px;
-          cursor: pointer;
-          transition: background 0.15s, border-color 0.15s;
-          white-space: nowrap;
-        }
-
-        .thread-pagination-nav:hover:not(:disabled) {
-          background: #142234;
-          border-color: #2a3a55;
-        }
-
-        .thread-pagination-nav:disabled {
-          opacity: 0.35;
-          cursor: not-allowed;
-        }
-
-        .thread-pagination-nav--next {
-          background: #6c63ff;
-          border-color: #6c63ff;
-          color: #fff;
-        }
-
-        .thread-pagination-nav--next:hover:not(:disabled) {
-          background: #5a52e0;
-        }
-
-        .thread-pagination-numbers {
-          display: flex;
-          align-items: center;
-          gap: 6px;
-        }
-
-        .thread-pagination-num {
-          min-width: 32px;
-          height: 32px;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          background: #0d1c28;
-          border: 1px solid #1a2535;
-          border-radius: 8px;
-          color: #c8dde8;
-          font-size: 12.5px;
-          font-weight: 600;
-          cursor: pointer;
-          transition: background 0.15s, border-color 0.15s, transform 0.1s;
-        }
-
-        .thread-pagination-num:hover {
-          background: #142234;
-          border-color: #2a3a55;
-        }
-
-        .thread-pagination-num--active {
-          background: #6c63ff;
-          border-color: #6c63ff;
-          color: #fff;
-        }
-
-        .thread-pagination-num--active:hover {
-          background: #6c63ff;
-        }
-
-        .thread-pagination-dots {
-          color: #4a7a94;
-          font-size: 12px;
-          padding: 0 4px;
-          letter-spacing: 1px;
-        }
-
-        @media (max-width: 480px) {
-          .thread-pagination-bar {
-            flex-wrap: wrap;
-            justify-content: center;
-            border-radius: 14px;
-          }
-          .thread-pagination-nav {
-            padding: 6px 10px;
-            font-size: 11px;
-          }
-          .thread-pagination-num {
-            min-width: 28px;
-            height: 28px;
-            font-size: 11.5px;
           }
         }
 

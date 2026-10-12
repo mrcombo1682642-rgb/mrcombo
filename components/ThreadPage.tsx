@@ -108,13 +108,17 @@ function isOnline(lastSeen: string | null) {
 
 // ── Resolve hidden link blocks in thread content.
 //
-// Access control (who sees the real link instantly vs. after replying)
+// Access control (who sees the real content instantly vs. after replying)
 // is enforced server-side inside the get_hidden_block RPC — this
 // function just asks for the content and renders whatever comes back:
-//   • RPC returns the real content  -> render the UNLOCKED card
-//     (link text + a separate "Open Link" button, green check status)
+//   • RPC returns the real content  -> render the UNLOCKED card.
+//     If the content is nothing but a single standalone URL, show the
+//     "Hidden Link" variant (link text + a separate "Open Link" button).
+//     Otherwise (plain text, multi-line data, combolists, etc.) show
+//     the "Hidden Content" variant, which preserves line breaks and
+//     renders the text as-is instead of squeezing it into a link pill.
 //   • RPC returns null/empty        -> render the LOCKED card
-//     (no link, just a "Reply to Unlock" button, lock status)
+//     (no content shown, just a "Reply to Unlock" button, lock status)
 // ──
 async function resolveHiddenBlocks(html: string): Promise<string> {
   if (!html.includes("data-hlb-id")) return html;
@@ -138,35 +142,56 @@ async function resolveHiddenBlocks(html: string): Promise<string> {
       }
 
       if (content) {
-        // Pull the real URL out of whatever HTML was stored (link card,
-        // old chip, or a raw <a>), so we can render it as: link text +
-        // a separate "Open Link" button.
+        // Figure out whether the stored content is nothing but a single
+        // standalone link (show the "Open Link" card) or actual text —
+        // plain text, multiple lines, a combolist, etc. (show it as-is,
+        // with line breaks preserved, instead of forcing it into the
+        // link-styled pill which was collapsing everything onto one line).
         const tempDoc = parser.parseFromString(content, "text/html");
-        const linkEl = tempDoc.querySelector("a");
-        const url = linkEl ? linkEl.getAttribute("href") : null;
-        const plainText = (tempDoc.body.textContent || "").trim();
+        const linkEls = tempDoc.querySelectorAll("a");
+        const bodyText = (tempDoc.body.textContent || "").trim();
+        const isSingleLink =
+          linkEls.length === 1 &&
+          bodyText === (linkEls[0].textContent || "").trim() &&
+          bodyText.length > 0;
 
-        el.outerHTML = `
-          <div class="hlb-card hlb-unlocked">
-            <div class="hlb-top">
-              <div class="hlb-icon">🔗</div>
-              <div class="hlb-info">
-                <div class="hlb-title-row">
-                  <span class="hlb-title">Hidden Link</span>
-                  <span class="hlb-badge-unlocked">Unlocked</span>
+        if (isSingleLink) {
+          const url = linkEls[0].getAttribute("href") || "";
+          el.outerHTML = `
+            <div class="hlb-card hlb-unlocked">
+              <div class="hlb-top">
+                <div class="hlb-icon">🔗</div>
+                <div class="hlb-info">
+                  <div class="hlb-title-row">
+                    <span class="hlb-title">Hidden Link</span>
+                    <span class="hlb-badge-unlocked">Unlocked</span>
+                  </div>
+                  <div class="hlb-sub">This link is visible because you are an Admin / Premium user.</div>
                 </div>
-                <div class="hlb-sub">This link is visible because you are an Admin / Premium user.</div>
+                <div class="hlb-status hlb-status-unlocked">✓</div>
               </div>
-              <div class="hlb-status hlb-status-unlocked">✓</div>
-            </div>
-            <div class="hlb-linkrow">
-              ${url
-                ? `<span class="hlb-url">${url}</span>
-                   <a href="${url}" target="_blank" rel="noopener noreferrer" class="hlb-openbtn">↗ Open Link</a>`
-                : `<span class="hlb-url">${plainText}</span>`
-              }
-            </div>
-          </div>`;
+              <div class="hlb-linkrow">
+                <span class="hlb-url">${url}</span>
+                <a href="${url}" target="_blank" rel="noopener noreferrer" class="hlb-openbtn">↗ Open Link</a>
+              </div>
+            </div>`;
+        } else {
+          el.outerHTML = `
+            <div class="hlb-card hlb-unlocked">
+              <div class="hlb-top">
+                <div class="hlb-icon">🔓</div>
+                <div class="hlb-info">
+                  <div class="hlb-title-row">
+                    <span class="hlb-title">Hidden Content</span>
+                    <span class="hlb-badge-unlocked">Unlocked</span>
+                  </div>
+                  <div class="hlb-sub">This content is visible because you are an Admin / Premium user.</div>
+                </div>
+                <div class="hlb-status hlb-status-unlocked">✓</div>
+              </div>
+              <div class="hlb-textblock">${content}</div>
+            </div>`;
+        }
       } else {
         el.outerHTML = `
           <div class="hlb-card hlb-locked">
@@ -1365,7 +1390,7 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
           border-color: #00b4d8;
         }
 
-        /* ── Hidden Link cards (locked / unlocked) ── */
+        /* ── Hidden Link / Hidden Content cards (locked / unlocked) ── */
         .rte-content .hlb-card {
           border: 1px solid #2a3a6e;
           border-radius: 10px;
@@ -1504,6 +1529,25 @@ export default function ThreadPage({ threadId }: ThreadPageProps) {
         }
         .rte-content .hlb-unlock-btn:hover {
           background: #5a52e0;
+        }
+
+        /* Plain / multi-line hidden text content (combolists, notes, etc.)
+           — preserves line breaks instead of collapsing everything onto
+           one line like the old single-span rendering used to. */
+        .rte-content .hlb-textblock {
+          margin-top: 12px;
+          background: #0a1520;
+          border: 1px solid #1a3042;
+          border-radius: 8px;
+          padding: 12px 14px;
+          color: #c8dde8;
+          font-size: 13px;
+          line-height: 1.6;
+          white-space: pre-wrap;
+          word-break: break-word;
+          font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+          max-height: 420px;
+          overflow-y: auto;
         }
 
         @media (max-width: 480px) {

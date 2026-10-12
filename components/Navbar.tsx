@@ -60,6 +60,7 @@ export default function Navbar() {
   };
 
   const [user, setUser] = useState<any>(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [username, setUsername] = useState("");
   const [avatarUrl, setAvatarUrl] = useState("");
   const [role, setRole] = useState("member");
@@ -130,76 +131,61 @@ export default function Navbar() {
     return () => document.removeEventListener("mousedown", handler);
   }, [profileMenuOpen]);
 
-  useEffect(() => {
-    const loadUser = async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+useEffect(() => {
+  let mounted = true;
 
-      setUser(user);
+  // Local session turant restore hota hai (expired token ho to refresh bhi karta hai)
+  supabase.auth.getSession().then(({ data }) => {
+    if (!mounted) return;
+    setUser(data.session?.user ?? null);
+    setAuthLoading(false);
+  });
 
-      if (user) {
-        const { data } = await supabase
-          .from("profiles")
-          .select("username, avatar_url, role")
-          .eq("id", user.id)
-          .single();
+  const {
+    data: { subscription },
+  } = supabase.auth.onAuthStateChange((_event, session) => {
+    if (!mounted) return;
+    setUser(session?.user ?? null);
+    setAuthLoading(false);
+  });
 
-        if (data) {
-          setUsername(data.username);
-          setAvatarUrl(data.avatar_url || "");
-          setRole(data.role || "member");
-        }
-      }
-    };
+  // Tab dobara khulne par session ko refresh-check karwa do
+  const onVisible = () => {
+    if (document.visibilityState === "visible") supabase.auth.getSession();
+  };
+  document.addEventListener("visibilitychange", onVisible);
 
-    loadUser();
+  return () => {
+    mounted = false;
+    subscription.unsubscribe();
+    document.removeEventListener("visibilitychange", onVisible);
+  };
+}, []);
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      setUser(session?.user ?? null);
-
-      if (session?.user) {
-        const { data } = await supabase
-          .from("profiles")
-          .select("username, avatar_url, role")
-          .eq("id", session.user.id)
-          .single();
-
-        if (data) {
-          setUsername(data.username);
-          setAvatarUrl(data.avatar_url || "");
-          setRole(data.role || "member");
-        }
-      } else {
-        setUsername("");
-        setAvatarUrl("");
-        setRole("member");
-      }
+// Profile alag effect mein load hota hai (auth callback ke andar supabase query nahi)
+useEffect(() => {
+  if (!user?.id) {
+    setUsername("");
+    setAvatarUrl("");
+    setRole("member");
+    return;
+  }
+  let cancelled = false;
+  supabase
+    .from("profiles")
+    .select("username, avatar_url, role")
+    .eq("id", user.id)
+    .single()
+    .then(({ data }) => {
+      if (cancelled || !data) return;
+      setUsername(data.username);
+      setAvatarUrl(data.avatar_url || "");
+      setRole(data.role || "member");
     });
-
-    return () => subscription.unsubscribe();
-  }, []);
-
-  // ── GLOBAL ONLINE HEARTBEAT ──────────────────────────────────
-  // Navbar renders on every page, so this keeps `last_seen` fresh
-  // no matter where the logged-in user is browsing (not just their
-  // own profile page). This is what powers "online now" everywhere.
-  useEffect(() => {
-    if (!user) return;
-
-    async function heartbeat() {
-      await supabase
-        .from("profiles")
-        .update({ last_seen: new Date().toISOString() })
-        .eq("id", user.id);
-    }
-
-    heartbeat(); // immediately on mount / user change
-    const interval = setInterval(heartbeat, 60000); // every 60s
-    return () => clearInterval(interval);
-  }, [user]);
+  return () => {
+    cancelled = true;
+  };
+}, [user?.id]);
 
   return (
     <>
@@ -446,7 +432,9 @@ export default function Navbar() {
         )}
 
         <div className="nav-actions">
-          {!user ? (
+          {authLoading ? (
+          <div style={{ width: 40, height: 40 }} />
+            ) : !user ? (
             <>
               <Link href="/login" className="btn-login">
                 Login

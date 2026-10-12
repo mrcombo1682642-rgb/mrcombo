@@ -126,6 +126,12 @@ export default function ProfilePageClient({ targetUsername }: { targetUsername: 
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const coverInputRef = useRef<HTMLInputElement>(null);
 
+  // Guards against track_profile_visit firing twice for the same profile
+  // visit — React 18 Strict Mode (dev only) intentionally double-invokes
+  // effects, which would otherwise insert two visitor rows and increment
+  // profile_views by 2 instead of 1.
+  const visitTrackedForRef = useRef<string | null>(null);
+
   useEffect(() => {
     init();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -175,21 +181,26 @@ export default function ProfilePageClient({ targetUsername }: { targetUsername: 
       const adminViewer = viewerRole === "admin";
       setIsAdminViewer(adminViewer);
 
-      const { error: visitError } = await supabase.rpc("track_profile_visit", {
-        target_user_id: profileData.id,
-        visitor_id_input: uid,
-        visitor_username_input: visitorUsername,
-      });
-      if (visitError) {
-        console.error("track_profile_visit failed:", visitError.message);
-      } else {
-        // The RPC just bumped profiles.profile_views — profileData above
-        // was fetched before that, so pull the fresh count so the header
-        // shows this visit immediately instead of lagging by one.
-        const { data: freshViews } = await supabase
-          .from("profiles").select("profile_views").eq("id", profileData.id).single();
-        if (freshViews) {
-          setProfile(prev => prev ? { ...prev, profile_views: freshViews.profile_views } as Profile : prev);
+      if (visitTrackedForRef.current !== profileData.id) {
+        visitTrackedForRef.current = profileData.id;
+
+        const { error: visitError } = await supabase.rpc("track_profile_visit", {
+          target_user_id: profileData.id,
+          visitor_id_input: uid,
+          visitor_username_input: visitorUsername,
+        });
+        if (visitError) {
+          console.error("track_profile_visit failed:", visitError.message);
+          visitTrackedForRef.current = null; // allow retry on next mount
+        } else {
+          // The RPC just bumped profiles.profile_views — profileData above
+          // was fetched before that, so pull the fresh count so the header
+          // shows this visit immediately instead of lagging by one.
+          const { data: freshViews } = await supabase
+            .from("profiles").select("profile_views").eq("id", profileData.id).single();
+          if (freshViews) {
+            setProfile(prev => prev ? { ...prev, profile_views: freshViews.profile_views } as Profile : prev);
+          }
         }
       }
 
@@ -391,7 +402,9 @@ export default function ProfilePageClient({ targetUsername }: { targetUsername: 
       return;
     }
 
-    // Check monthly limit (3 per month)
+    const isAdminUser = normalizedRole === "admin";
+
+    // Check monthly limit (3 per month) — admins are exempt
     const now = new Date();
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
     const { data: monthRequests } = await supabase
@@ -399,7 +412,7 @@ export default function ProfilePageClient({ targetUsername }: { targetUsername: 
       .select("id").eq("user_id", currentUserId)
       .gte("created_at", monthStart);
 
-    if ((monthRequests?.length || 0) >= 3) {
+    if (!isAdminUser && (monthRequests?.length || 0) >= 3) {
       setUsernameMsg("❌ You have reached the limit of 3 username change requests this month.");
       return;
     }
@@ -408,6 +421,35 @@ export default function ProfilePageClient({ targetUsername }: { targetUsername: 
     const { data: existing } = await supabase
       .from("profiles").select("username").eq("username", newUsername.trim()).maybeSingle();
     if (existing) { setUsernameMsg("❌ Username already taken."); return; }
+
+    // Admins don't need approval — apply the new username right away.
+    if (isAdminUser) {
+      const { error: applyError } = await supabase
+        .from("profiles")
+        .update({ username: newUsername.trim() })
+        .eq("id", currentUserId);
+
+      if (applyError) {
+        console.error("Admin username change failed:", applyError.message);
+        setUsernameMsg("❌ Could not change username: " + applyError.message);
+        return;
+      }
+
+      // History only — logged as already approved, never "pending".
+      const { error: logError } = await supabase.from("username_change_requests").insert({
+        user_id: currentUserId,
+        current_username: profile.username,
+        requested_username: newUsername.trim(),
+        status: "approved",
+      });
+      if (logError) console.warn("Could not log admin username change:", logError.message);
+
+      setUsernameMsg("✅ Username changed!");
+      setNewUsername("");
+      // The profile URL is /profile/<username>, so move to the new one.
+      setTimeout(() => { window.location.href = `/profile/${newUsername.trim()}`; }, 800);
+      return;
+    }
 
     // Submit request
     const { error } = await supabase.from("username_change_requests").insert({
@@ -953,7 +995,11 @@ const isSubscriber = SUBSCRIPTION_ROLES.includes(normalizedRole) || normalizedRo
                     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                       <div style={{ background: "#050a0f", border: "1px solid #1a2535", borderRadius: 8, padding: 12, fontSize: 12, color: "#6a8a9a" }}>
                         ℹ️ Current username: <strong style={{ color: "#c8dde8" }}>{profile.username}</strong><br />
-                        You can request up to <strong style={{ color: "#f59e0b" }}>3 changes per month</strong>. Admin will review and approve your request.
+                        {normalizedRole === "admin" ? (
+                          <>As an admin, your username change is applied <strong style={{ color: "#22c55e" }}>instantly</strong> — no approval needed.</>
+                        ) : (
+                          <>You can request up to <strong style={{ color: "#f59e0b" }}>3 changes per month</strong>. Admin will review and approve your request.</>
+                        )}
                       </div>
 
                       <Field label="NEW USERNAME">
@@ -967,7 +1013,7 @@ const isSubscriber = SUBSCRIPTION_ROLES.includes(normalizedRole) || normalizedRo
                       )}
 
                       <button onClick={handleUsernameRequest} style={{ background: "#6c63ff", border: "none", borderRadius: 8, padding: "12px 0", color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
-                        Submit Change Request
+                        {normalizedRole === "admin" ? "Change Username" : "Submit Change Request"}
                       </button>
 
                       {usernameRequests.length > 0 && (

@@ -5,150 +5,234 @@ import Footer from "@/components/Footbar";
 
 export default function NoPermissionPage() {
   return (
-    <div style={{ minHeight: "100vh", background: "#050a0f", color: "#c8dde8", fontFamily: "sans-serif" }}>
-      <Navbar />
+    <>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
 
-      <div style={{ maxWidth: 680, margin: "0 auto", padding: "80px 16px 64px" }}>
-        {/* Main Card */}
-        <div style={{
-          background: "#0a1520",
-          border: "1px solid #1a3a4a",
-          borderRadius: 12,
-          padding: "48px 40px",
-          textAlign: "center",
-        }}>
-          {/* Lock Icon */}
-          <div style={{
-            width: 72,
-            height: 72,
-            background: "linear-gradient(135deg, #00b4d820, #00b4d810)",
-            border: "2px solid #00b4d840",
-            borderRadius: "50%",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            margin: "0 auto 24px",
-          }}>
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#00b4d8" strokeWidth="2">
-              <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-              <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-            </svg>
-          </div>
+        .no-perm-page {
+          min-height: 100vh;
+          background: #050a0f;
+          display: flex;
+          flex-direction: column;
+          font-family: 'Inter', sans-serif;
+        }
 
-          <h1 style={{ margin: "0 0 12px", fontSize: 26, color: "#e0f0ff", fontWeight: 700 }}>
-            Access Denied
-          </h1>
-          <p style={{ margin: "0 0 32px", color: "#6a8a9a", fontSize: 15, lineHeight: 1.7 }}>
-            You don't have permission to view this page. This area is restricted to members with the required access level.
-          </p>
+        /* Breadcrumb bar */
+        .no-perm-breadcrumb {
+          background: #060c14;
+          border-bottom: 1px solid #0d2030;
+          padding: 10px 20px;
+          font-size: 13px;
+          color: #4a7a94;
+        }
+        .no-perm-breadcrumb span {
+          color: #b8cfd8;
+          font-weight: 600;
+        }
 
-          {/* Options */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 32 }}>
-            <div style={{
-              background: "#0d1f2d",
-              border: "1px solid #1a3a4a",
-              borderRadius: 8,
-              padding: "16px 20px",
-              display: "flex",
-              alignItems: "center",
-              gap: 14,
-              textAlign: "left",
-            }}>
-              <div style={{
-                width: 36, height: 36, borderRadius: "50%",
-                background: "#00b4d815", border: "1px solid #00b4d830",
-                display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-              }}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#00b4d8" strokeWidth="2">
-                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-                  <circle cx="12" cy="7" r="4" />
-                </svg>
-              </div>
-              <div>
-                <div style={{ fontSize: 14, color: "#c8dde8", fontWeight: 600 }}>Already a member?</div>
-                <div style={{ fontSize: 13, color: "#6a8a9a" }}>Log in to your account to access this content</div>
+        /* Main content wrapper */
+        .no-perm-main {
+          flex: 1;
+          padding: 28px 16px 48px;
+          max-width: 760px;
+          width: 100%;
+          margin: 0 auto;
+        }
+
+        /* Card */
+        .no-perm-card {
+          background: #080e18;
+          border: 1px solid #0d2030;
+          border-radius: 10px;
+          overflow: hidden;
+        }
+
+        /* Card header — red banner with title */
+        .no-perm-card-header {
+          background: linear-gradient(135deg, #c0392b, #e74c3c);
+          padding: 14px 20px;
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        }
+        .no-perm-card-header-badge {
+          background: rgba(0,0,0,0.25);
+          border-radius: 5px;
+          padding: 4px 12px;
+          font-size: 13px;
+          font-weight: 700;
+          color: #fff;
+          letter-spacing: 0.5px;
+          white-space: nowrap;
+        }
+
+        /* Card title above the red bar */
+        .no-perm-section-title {
+          text-align: center;
+          font-size: 13px;
+          font-weight: 700;
+          letter-spacing: 2.5px;
+          color: #e74c3c;
+          text-transform: uppercase;
+          padding: 20px 20px 14px;
+          border-bottom: 1px solid #0d2030;
+        }
+
+        /* Card body */
+        .no-perm-body {
+          padding: 22px 22px 28px;
+          color: #b8cfd8;
+        }
+
+        .no-perm-intro {
+          font-size: 15px;
+          line-height: 1.7;
+          margin-bottom: 20px;
+          color: #a0bfcc;
+        }
+
+        .no-perm-list {
+          list-style: none;
+          margin: 0;
+          padding: 0;
+          display: flex;
+          flex-direction: column;
+          gap: 14px;
+          counter-reset: perm-counter;
+        }
+
+        .no-perm-list li {
+          display: flex;
+          gap: 12px;
+          font-size: 14px;
+          line-height: 1.65;
+          color: #8ab0bf;
+          counter-increment: perm-counter;
+        }
+
+        .no-perm-list li::before {
+          content: counter(perm-counter) ".";
+          color: #e74c3c;
+          font-weight: 700;
+          font-size: 14px;
+          flex-shrink: 0;
+          margin-top: 1px;
+        }
+
+        .no-perm-link {
+          color: #00b4d8;
+          font-weight: 600;
+          text-decoration: none;
+          cursor: pointer;
+        }
+        .no-perm-link:hover { color: #0077b6; text-decoration: underline; }
+
+        .no-perm-link-bold {
+          color: #b8cfd8;
+          font-weight: 700;
+          text-decoration: none;
+          cursor: pointer;
+        }
+        .no-perm-link-bold:hover { color: #00b4d8; }
+
+        /* Back button */
+        .no-perm-back {
+          margin-top: 24px;
+          display: flex;
+          justify-content: flex-start;
+        }
+        .no-perm-back-btn {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          padding: 10px 22px;
+          background: linear-gradient(135deg, #0077b6, #00b4d8);
+          border: none;
+          border-radius: 8px;
+          color: #fff;
+          font-family: 'Inter', sans-serif;
+          font-size: 14px;
+          font-weight: 600;
+          cursor: pointer;
+          text-decoration: none;
+          transition: opacity 0.2s, transform 0.15s;
+        }
+        .no-perm-back-btn:hover { opacity: 0.88; transform: translateY(-1px); }
+      `}</style>
+
+      <div className="no-perm-page">
+        <Navbar />
+
+        {/* Breadcrumb */}
+        <div className="no-perm-breadcrumb" style={{ marginTop: 64 }}>
+          <a href="#" className="no-perm-link" style={{ fontWeight: 500 }}>Home</a>
+          {" "}&rsaquo;{" "}
+          <span>No Permission</span>
+        </div>
+
+        {/* Main */}
+        <main className="no-perm-main">
+          <div className="no-perm-card">
+
+            {/* Section title */}
+            <div className="no-perm-section-title">No Permission</div>
+
+            {/* Red header bar */}
+            <div className="no-perm-card-header">
+              <span className="no-perm-card-header-badge">MRCombo</span>
+            </div>
+
+            {/* Body */}
+            <div className="no-perm-body">
+              <p className="no-perm-intro">
+                You are either not logged in or do not have permission to view this page.
+                This could be because one of the following reasons:
+              </p>
+
+              <ol className="no-perm-list">
+                <li>
+                  <span>
+                    You are not logged in or registered. Please login and retry the desired action.{" "}
+                    <a href="#" className="no-perm-link">Login</a>
+                    {" | "}
+                    <a href="#" className="no-perm-link-bold">Need to register?</a>
+                  </span>
+                </li>
+                <li>
+                  <span>
+                    You do not have permission to access this page. Are you trying to access
+                    administrative pages or a resource that you shouldn&apos;t be? Check in the
+                    forum rules that you are allowed to perform this action.
+                  </span>
+                </li>
+                <li>
+                  <span>
+                    Your account may have been disabled by an administrator, or it may be
+                    awaiting account activation.
+                  </span>
+                </li>
+                <li>
+                  <span>
+                    You have accessed this page directly rather than using appropriate forms or links.
+                  </span>
+                </li>
+              </ol>
+
+              <div className="no-perm-back">
+                <a href="/" className="no-perm-back-btn">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <polyline points="15 18 9 12 15 6" />
+                  </svg>
+                  Go Back Home
+                </a>
               </div>
             </div>
 
-            <div style={{
-              background: "#0d1f2d",
-              border: "1px solid #1a3a4a",
-              borderRadius: 8,
-              padding: "16px 20px",
-              display: "flex",
-              alignItems: "center",
-              gap: 14,
-              textAlign: "left",
-            }}>
-              <div style={{
-                width: 36, height: 36, borderRadius: "50%",
-                background: "#00b4d815", border: "1px solid #00b4d830",
-                display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-              }}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#00b4d8" strokeWidth="2">
-                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-                </svg>
-              </div>
-              <div>
-                <div style={{ fontSize: 14, color: "#c8dde8", fontWeight: 600 }}>Need an upgrade?</div>
-                <div style={{ fontSize: 13, color: "#6a8a9a" }}>This content may require a VIP or premium membership</div>
-              </div>
-            </div>
           </div>
+        </main>
 
-          {/* Buttons */}
-          <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
-            <a href="/" style={{
-              background: "transparent",
-              border: "1px solid #1a3a4a",
-              borderRadius: 6,
-              padding: "10px 24px",
-              color: "#9ab8c8",
-              textDecoration: "none",
-              fontSize: 14,
-              cursor: "pointer",
-            }}>
-              ← Back to Home
-            </a>
-            <a href="/upgrade" style={{
-              background: "linear-gradient(135deg, #00b4d8, #0077a8)",
-              border: "none",
-              borderRadius: 6,
-              padding: "10px 24px",
-              color: "#fff",
-              textDecoration: "none",
-              fontSize: 14,
-              fontWeight: 600,
-              cursor: "pointer",
-            }}>
-              Upgrade Account
-            </a>
-          </div>
-        </div>
-
-        {/* Info box */}
-        <div style={{
-          marginTop: 20,
-          background: "#0a1520",
-          border: "1px solid #1a3a4a",
-          borderRadius: 8,
-          padding: "16px 20px",
-          display: "flex",
-          alignItems: "flex-start",
-          gap: 12,
-        }}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6a8a9a" strokeWidth="2" style={{ flexShrink: 0, marginTop: 1 }}>
-            <circle cx="12" cy="12" r="10" />
-            <line x1="12" y1="8" x2="12" y2="12" />
-            <line x1="12" y1="16" x2="12.01" y2="16" />
-          </svg>
-          <p style={{ margin: 0, fontSize: 13, color: "#6a8a9a", lineHeight: 1.7 }}>
-            If you believe this is an error or you should have access to this page, please contact support or post in the Support & Bugs section.
-          </p>
-        </div>
+        <Footer />
       </div>
-
-      <Footer />
-    </div>
+    </>
   );
 }
