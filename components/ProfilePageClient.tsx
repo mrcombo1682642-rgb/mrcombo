@@ -43,6 +43,15 @@ interface Usergroup {
   description: string | null;
 }
 
+const ONLINE_THRESHOLD_MS = 5 * 60 * 1000; // online = seen within 5 minutes
+const HEARTBEAT_INTERVAL_MS = 60 * 1000;   // logged-in viewer pings every 60s
+const STATUS_REFRESH_MS = 30 * 1000;       // re-check the viewed profile every 30s
+
+function isRecentlySeen(lastSeen: string | null | undefined) {
+  if (!lastSeen) return false;
+  return Date.now() - new Date(lastSeen).getTime() < ONLINE_THRESHOLD_MS;
+}
+
 function timeAgo(dateStr: string | null) {
   if (!dateStr) return "Never";
   const diff = Date.now() - new Date(dateStr).getTime();
@@ -137,6 +146,39 @@ export default function ProfilePageClient({ targetUsername }: { targetUsername: 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [targetUsername]);
 
+  // ── Online status, kept live ──
+  //  • A logged-in viewer pings touch_last_seen every 60s (and right away),
+  //    so they show as online for as long as they have this page open.
+  //  • The viewed profile's last_seen is re-fetched every 30s, so the
+  //    Online / Last seen label updates without a page refresh.
+  const viewedProfileId = profile?.id;
+  useEffect(() => {
+    if (!viewedProfileId) return;
+
+    async function refreshStatus() {
+      const { data } = await supabase
+        .from("profiles").select("last_seen").eq("id", viewedProfileId).single();
+      if (!data) return;
+      setProfile(prev => prev ? { ...prev, last_seen: data.last_seen } as Profile : prev);
+      setIsOnline(isOwner || isRecentlySeen(data.last_seen));
+    }
+
+    const poll = setInterval(refreshStatus, STATUS_REFRESH_MS);
+
+    let beat: ReturnType<typeof setInterval> | undefined;
+    if (currentUserId) {
+      supabase.rpc("touch_last_seen").then(({ error }) => {
+        if (error) console.error("touch_last_seen failed:", error.message);
+      });
+      beat = setInterval(() => { supabase.rpc("touch_last_seen"); }, HEARTBEAT_INTERVAL_MS);
+    }
+
+    return () => {
+      clearInterval(poll);
+      if (beat) clearInterval(beat);
+    };
+  }, [viewedProfileId, currentUserId, isOwner]);
+
   async function init() {
     setLoading(true);
     setNotFound(false);
@@ -164,10 +206,9 @@ export default function ProfilePageClient({ targetUsername }: { targetUsername: 
       const owner = uid === profileData.id;
       setIsOwner(owner);
 
-      if (profileData.last_seen) {
-        const diffMin = (Date.now() - new Date(profileData.last_seen).getTime()) / 60000;
-        setIsOnline(diffMin < 5);
-      }
+      // The owner is obviously online while looking at their own profile;
+      // for everyone else, go by how recently last_seen was touched.
+      setIsOnline(owner || isRecentlySeen(profileData.last_seen));
 
       // Track visit + check viewer role (for admin controls)
       let visitorUsername = "Guest";
@@ -276,10 +317,8 @@ export default function ProfilePageClient({ targetUsername }: { targetUsername: 
         setUsernameRequests(requests || []);
       }
 
-      // Update last_seen
-      if (uid && owner) {
-        await supabase.from("profiles").update({ last_seen: new Date().toISOString() }).eq("id", uid);
-      }
+      // last_seen is now kept fresh by the heartbeat effect below
+      // (touch_last_seen every 60s for any logged-in viewer).
     } catch (err) {
       console.error("Profile init error:", err);
       setNotFound(true);
